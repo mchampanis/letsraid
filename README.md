@@ -1,22 +1,77 @@
 # LetsRaid
 
-Discord LFG (Looking For Game) bot for the First Wave Survivors server.
+Discord LFG (Looking For Game) bot for the First Wave Survivors server. Built for Arc Raiders (2-3 player teams).
 
 ## Features
 
-- `/lfg` slash command to create LFG posts in `#looking-for-game`
-- Interactive buttons: Join, Leave, Close, Full/Open toggle, Delete
-- Role pings to notify interested players
-- Voice channel links for quick joining
-- Posts auto-expire after 24 hours
-- Buttons survive bot restarts
+- `/lfg` slash command with PvP/PvE mode selection and popup form
+- Voice channel picker in the modal, auto-defaults to your current or least-full VC
+- PvP/PvE mode icons on embeds
+- Role pings to notify players looking for games
+- Owner gets a DM with Game Finished button to clean up the post
+- `/lfglist` to browse all open LFG posts
+- `/lfgroles` posts a permanent role picker for LFG PvP / LFG PvE
+- `/lfgnow` personal role toggle with live-updating buttons
+- Auto-move to voice channel on join (configurable)
+- Posts auto-expire after 3 hours
+- All buttons survive bot restarts
 
 ## Setup
 
-1. Create a Discord application at https://discord.com/developers/applications
-2. Enable the **Server Members Intent** under Bot settings
-3. Invite the bot with these permissions: Send Messages, Embed Links, Mention Everyone, Read Message History, View Channels
-4. Copy `.env.example` to `.env` and fill in your token and guild ID
+### 1. Create the bot application
+
+1. Go to https://discord.com/developers/applications
+2. Click "New Application", name it (e.g. "Let's Raid bot")
+3. Go to the **Bot** tab, click "Reset Token", copy the token
+
+### 2. Enable required intents
+
+Still on the **Bot** tab, scroll to "Privileged Gateway Intents" and enable:
+- **Server Members Intent**
+
+### 3. Invite the bot to your server
+
+1. Go to the **OAuth2** tab
+2. Under "OAuth2 URL Generator", check: `bot` and `applications.commands`
+3. Under "Bot Permissions", check:
+   - Send Messages
+   - Manage Messages
+   - Embed Links
+   - Read Message History
+   - Move Members
+   - Manage Roles
+4. Copy the generated URL and open it in your browser, select your server
+
+### 4. Server setup
+
+Create these in your Discord server:
+
+**Channels:**
+- `#looking-for-game` -- text channel where LFG posts appear
+- Voice channels prefixed with `VC` (e.g. `VC1`, `VC2`) -- these show up in the VC picker
+
+**Roles:**
+- `LFG PvP` -- pinged when someone creates a PvP game
+- `LFG PvE` -- pinged when someone creates a PvE game
+
+Make sure the bot's role (e.g. "Let's Raid bot") is **above** the LFG roles in the role list (Server Settings > Roles), otherwise it can't assign them.
+
+**Custom emoji (optional):**
+- Upload `assets/pvp.png` as a custom emoji named `lfg_pvp`
+- Upload `assets/pve.png` as a custom emoji named `lfg_pve`
+
+These can be used in role picker buttons.
+
+### 5. Configure and run
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```
+BOT_TOKEN=your-bot-token
+GUILD_ID=your-server-id
+```
+
+Install and run:
 
 ```
 uv sync
@@ -29,20 +84,34 @@ Or use the runner script:
 ./run.ps1
 ```
 
+### 6. First-time bot commands
+
+Run these once after the bot is online:
+
+- `/lfgroles` in your `#roles` channel (or wherever you want the role picker) -- posts the permanent LFG role toggle buttons. Pin it for visibility.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `BOT_TOKEN` | Yes | -- | Discord bot token |
 | `GUILD_ID` | Yes | -- | Discord server ID |
-| `LFG_CHANNEL_NAME` | No | `looking-for-game` | Channel name for LFG posts |
+| `LFG_CHANNEL_NAME` | No | `looking-for-game` | Text channel for LFG posts |
 | `DB_PATH` | No | `letsraid.db` | SQLite database path |
+| `LFG_PVP_ROLE` | No | `LFG PvP` | Role name for PvP pings |
+| `LFG_PVE_ROLE` | No | `LFG PvE` | Role name for PvE pings |
+| `VC_PREFIX` | No | `VC` | Voice channel name prefix filter |
+| `AUTO_JOIN_VC` | No | `true` | Auto-move players to VC on join |
 
-## Usage
+## Commands
 
-1. Type `/lfg max_slots:6` in any channel
-2. Fill in the description and start time in the modal
-3. Pick a voice channel and roles to ping
-4. Click "Create LFG Post"
+| Command | Who | Description |
+|---|---|---|
+| `/lfg` | Everyone | Create an LFG post (pick PvP or PvE, fill in details) |
+| `/lfglist` | Everyone | Browse all open LFG posts |
+| `/lfgnow` | Everyone | Toggle your LFG roles with live-updating buttons |
+| `/lfgroles` | Admins | Post the permanent role picker message |
 
-The post appears in `#looking-for-game` with interactive buttons for other players to join.
+## License
+
+MIT

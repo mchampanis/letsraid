@@ -264,6 +264,109 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
         )
 
 
+# -- Role toggle button ----------------------------------------------------
+
+
+EMOJI_NAMES = {"pvp": "lfg_pvp", "pve": "lfg_pve"}
+
+
+def get_lfg_emoji(guild: discord.Guild, mode: str) -> discord.Emoji | None:
+    name = EMOJI_NAMES.get(mode)
+    if name:
+        return discord.utils.get(guild.emojis, name=name)
+    return None
+
+
+class RoleToggleButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:role:(?P<mode>pvp|pve)"):
+    def __init__(self, mode: str, emoji: discord.Emoji | None = None):
+        mode_label = "PvP" if mode == "pvp" else "PvE"
+        super().__init__(
+            discord.ui.Button(
+                label=f"Looking to play {mode_label}",
+                style=discord.ButtonStyle.green if mode == "pve" else discord.ButtonStyle.red,
+                custom_id=f"lfg:role:{mode}",
+                emoji=emoji,
+            )
+        )
+        self.mode = mode
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match, /):
+        return cls(match["mode"])
+
+    async def callback(self, interaction: discord.Interaction):
+        role_name = config.LFG_ROLE_NAMES.get(self.mode)
+        if not role_name:
+            return await interaction.response.send_message("Role not configured.", ephemeral=True)
+
+        role = discord.utils.get(interaction.guild.roles, name=role_name)
+        if not role:
+            return await interaction.response.send_message(f"Role '{role_name}' not found on this server.", ephemeral=True)
+
+        if role in interaction.user.roles:
+            await interaction.user.remove_roles(role)
+            await interaction.response.send_message(f"Removed **{role_name}** -- you won't be pinged for these games.", ephemeral=True)
+        else:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message(f"Added **{role_name}** -- you'll be pinged when someone creates a game!", ephemeral=True)
+
+
+class LFGNowView(discord.ui.View):
+    def __init__(self, member: discord.Member):
+        super().__init__(timeout=120)
+        self.member = member
+        user_roles = [r.name for r in member.roles]
+
+        for mode in ("pvp", "pve"):
+            role_name = config.LFG_ROLE_NAMES.get(mode, "")
+            mode_label = "PvP" if mode == "pvp" else "PvE"
+            has_role = role_name in user_roles
+
+            emoji = get_lfg_emoji(member.guild, mode)
+            button = discord.ui.Button(
+                label=f"Stop looking for {mode_label}" if has_role else f"Looking for {mode_label}",
+                style=discord.ButtonStyle.red if has_role else discord.ButtonStyle.green,
+                custom_id=f"lfgnow:{mode}",
+                emoji=emoji,
+            )
+            button.callback = self._make_callback(mode, role_name)
+            self.add_item(button)
+
+    def _make_callback(self, mode: str, role_name: str):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.member.id:
+                return await interaction.response.send_message("This isn't for you.", ephemeral=True)
+
+            role = discord.utils.get(interaction.guild.roles, name=role_name)
+            if not role:
+                return await interaction.response.send_message(f"Role '{role_name}' not found.", ephemeral=True)
+
+            if role in interaction.user.roles:
+                await interaction.user.remove_roles(role)
+            else:
+                await interaction.user.add_roles(role)
+
+            # Refetch member to get updated roles
+            member = await interaction.guild.fetch_member(interaction.user.id)
+            new_view = LFGNowView(member)
+            await interaction.response.edit_message(view=new_view)
+
+        return callback
+
+
+class LFGStartView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="PvP", style=discord.ButtonStyle.red, custom_id="lfgstart:pvp")
+    async def pvp_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(LFGModal("pvp"))
+
+    @discord.ui.button(label="PvE", style=discord.ButtonStyle.green, custom_id="lfgstart:pve")
+    async def pve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(LFGModal("pve"))
+
+
 # -- Modal -----------------------------------------------------------------
 
 
@@ -445,14 +548,14 @@ class LFGCog(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_dynamic_items(
-            JoinButton, JoinVCButton, LeaveButton, GameFinishedButton
+            JoinButton, JoinVCButton, LeaveButton, GameFinishedButton, RoleToggleButton
         )
         self.cleanup_old_posts.start()
         log.info("LFG cog loaded")
 
     async def cog_unload(self):
         self.bot.remove_dynamic_items(
-            JoinButton, JoinVCButton, LeaveButton, GameFinishedButton
+            JoinButton, JoinVCButton, LeaveButton, GameFinishedButton, RoleToggleButton
         )
         self.cleanup_old_posts.cancel()
 
@@ -464,6 +567,27 @@ class LFGCog(commands.Cog):
     ])
     async def lfg(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
         await interaction.response.send_modal(LFGModal(mode.value))
+
+    @app_commands.command(name="lfgroles", description="Post the LFG role picker")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    async def lfgroles(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="I'm looking for a game!",
+            description="Choose the type of game you want to be notified for. You can choose one, both, or neither to disable pings.",
+            color=discord.Color.blurple(),
+        )
+        view = discord.ui.View(timeout=None)
+        view.add_item(RoleToggleButton("pvp", get_lfg_emoji(interaction.guild, "pvp")))
+        view.add_item(RoleToggleButton("pve", get_lfg_emoji(interaction.guild, "pve")))
+        await interaction.channel.send(embed=embed, view=view)
+        await interaction.response.send_message("Role picker posted!", ephemeral=True)
+
+    @app_commands.command(name="lfgnow", description="Toggle your LFG roles")
+    async def lfgnow(self, interaction: discord.Interaction):
+        view = LFGNowView(interaction.user)
+        await interaction.response.send_message(
+            "Looking for game settings:", view=view, ephemeral=True
+        )
 
     @app_commands.command(name="lfglist", description="Show all open LFG posts")
     async def lfglist(self, interaction: discord.Interaction):
@@ -491,6 +615,53 @@ class LFGCog(commands.Cog):
 
         embed.set_footer(text=f"{len(posts)} open game{'s' if len(posts) != 1 else ''}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="lfghelp", description="Show all LFG commands")
+    async def lfghelp(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="LFG Bot Commands",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="/lfg",
+            value="Create a Looking For Game post (PvP or PvE)",
+            inline=False,
+        )
+        embed.add_field(
+            name="/lfglist",
+            value="Browse all open LFG posts",
+            inline=False,
+        )
+        embed.add_field(
+            name="/lfgnow",
+            value="Toggle your LFG notification roles",
+            inline=False,
+        )
+        embed.add_field(
+            name="Right-click menu",
+            value="Right-click any user and look under **Apps** for:\n"
+                  "- **Start looking for game** -- create an LFG post\n"
+                  "- **Looking for Game settings** -- toggle your notification roles",
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # -- Context menu commands -------------------------------------------------
+
+    @app_commands.context_menu(name="Start looking for game")
+    async def ctx_start_lfg(self, interaction: discord.Interaction, user: discord.User):
+        # Show a mode picker, then open the modal
+        view = LFGStartView()
+        await interaction.response.send_message(
+            "Pick a mode to start:", view=view, ephemeral=True
+        )
+
+    @app_commands.context_menu(name="Looking for Game settings")
+    async def ctx_lfg_settings(self, interaction: discord.Interaction, user: discord.User):
+        view = LFGNowView(interaction.user)
+        await interaction.response.send_message(
+            "Looking for game settings:", view=view, ephemeral=True
+        )
 
     @tasks.loop(minutes=5)
     async def cleanup_old_posts(self):
