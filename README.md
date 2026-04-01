@@ -10,8 +10,8 @@ Discord LFG (Looking For Game) bot for the First Wave Survivors server. Built fo
 - Role pings to notify players looking for games
 - Owner gets a DM with Game Finished button to clean up the post
 - `/lfglist` to browse all open LFG posts
-- `/lfgroles` posts a permanent role picker for LFG PvP / LFG PvE
-- `/lfgnow` personal role toggle with live-updating buttons
+- `/lfgsetup` posts role picker and live game board in one command
+- `/lfgstatus` personal role toggle with live-updating buttons
 - Auto-move to voice channel on join (configurable)
 - Posts auto-expire after 3 hours
 - All buttons survive bot restarts
@@ -88,7 +88,7 @@ Or use the runner script:
 
 Run these once after the bot is online:
 
-- `/lfgroles` in your `#roles` channel (or wherever you want the role picker) -- posts the permanent LFG role toggle buttons. Pin it for visibility.
+- `/lfgsetup` in your `#looking-for-game` channel -- posts the role picker and live game board. Pin the role picker for visibility.
 
 ## Configuration
 
@@ -108,9 +108,10 @@ Run these once after the bot is online:
 | Command | Who | Description |
 |---|---|---|
 | `/lfg` | Everyone | Create an LFG post (pick PvP or PvE, fill in details) |
-| `/lfglist` | Everyone | Browse all open LFG posts |
-| `/lfgnow` | Everyone | Toggle your LFG roles with live-updating buttons |
-| `/lfgroles` | Admins | Post the permanent role picker message |
+| `/lfglist` | Everyone | Show all active games |
+| `/lfgstatus` | Everyone | Toggle your LFG roles with live-updating buttons |
+| `/lfghelp` | Everyone | Show all LFG commands |
+| `/lfgsetup` | Manage Roles + Channels | Post the role picker and live game board |
 
 ## License
 

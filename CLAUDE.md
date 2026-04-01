@@ -13,8 +13,8 @@ A Discord bot for the First Wave Survivors server. Creates Looking For Game post
 ## Running
 
 ```
-pip install -r requirements.txt
-python bot.py
+uv sync
+uv run python bot.py
 ```
 
 Requires `.env` with `BOT_TOKEN` and `GUILD_ID`.

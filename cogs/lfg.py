@@ -1,6 +1,7 @@
 import logging
 import os
 
+import aiosqlite
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -139,6 +140,9 @@ class JoinButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:join:
             if vc:
                 await try_move_to_vc(interaction.user, vc)
 
+        await refresh_board(interaction.client)
+        await update_vc_status(interaction.client, post, interaction.guild)
+
 
 class JoinVCButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:joinvc:(?P<id>\d+)"):
     def __init__(self, lfg_id: int, disabled: bool = False):
@@ -220,6 +224,9 @@ class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leav
         view = build_lfg_view(self.lfg_id, status)
         await interaction.response.edit_message(embed=embed, view=view, attachments=[get_mode_icon(post["mode"])])
 
+        await refresh_board(interaction.client)
+        await update_vc_status(interaction.client, post, interaction.guild)
+
 
 class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:finished:(?P<id>\d+)"):
     def __init__(self, lfg_id: int, disabled: bool = False):
@@ -255,6 +262,11 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
                 except discord.NotFound:
                     pass
 
+        # Clear VC status before deleting
+        post["status"] = "closed"
+        if guild:
+            await update_vc_status(interaction.client, post, guild)
+
         await db.delete_lfg(interaction.client.db, self.lfg_id)
 
         # Update the DM message
@@ -262,6 +274,8 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
             content=f"LFG #{self.lfg_id}: Game finished. Post removed.",
             embed=None, view=None, attachments=[],
         )
+
+        await refresh_board(interaction.client)
 
 
 # -- Role toggle button ----------------------------------------------------
@@ -326,7 +340,7 @@ class LFGNowView(discord.ui.View):
             button = discord.ui.Button(
                 label=f"Stop looking for {mode_label}" if has_role else f"Looking for {mode_label}",
                 style=discord.ButtonStyle.red if has_role else discord.ButtonStyle.green,
-                custom_id=f"lfgnow:{mode}",
+                custom_id=f"lfgstatus:{mode}",
                 emoji=emoji,
             )
             button.callback = self._make_callback(mode, role_name)
@@ -397,8 +411,6 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
     def __init__(self, mode_value: str):
         super().__init__()
         self.mode_value = mode_value
-        self.mode_name = "PvP" if mode_value == "pvp" else "PvE"
-        self.selected_vc: discord.VoiceChannel | None = None
 
         self.vc_select = discord.ui.ChannelSelect(
             channel_types=[discord.ChannelType.voice, discord.ChannelType.stage_voice],
@@ -509,6 +521,9 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         except discord.Forbidden:
             log.warning("Could not DM creator %s for LFG #%s", interaction.user.id, lfg_id)
 
+        await refresh_board(interaction.client)
+        await update_vc_status(interaction.client, post, interaction.guild)
+
         followup_msg = f"LFG #{lfg_id}: Post created in {lfg_channel.mention}!"
         if vc_warning:
             followup_msg += f"\n{vc_warning}"
@@ -537,6 +552,89 @@ async def try_move_to_vc(member: discord.Member, channel: discord.VoiceChannel):
             await member.move_to(channel)
         except discord.Forbidden:
             log.warning("No permission to move %s to %s", member, channel)
+
+
+# -- Board -----------------------------------------------------------------
+
+
+async def build_board_embed(bot_db: aiosqlite.Connection, guild: discord.Guild) -> discord.Embed:
+    posts = await db.get_open_posts(bot_db, guild.id)
+
+    embed = discord.Embed(
+        title="Active Games",
+        color=discord.Color.blurple(),
+    )
+
+    if not posts:
+        embed.description = "No active games right now. Use `/lfg` to start one!"
+        return embed
+
+    for post in posts:
+        mode_label = "PvP" if post["mode"] == "pvp" else "PvE"
+        members = await db.get_lfg_members(bot_db, post["id"])
+        title = f"#{post['id']} - {mode_label}"
+        if post["description"]:
+            title += f": {post['description'][:50]}"
+
+        lines = [f"Party: {len(members)}/{post['max_slots']}"]
+        if post["start_time"]:
+            lines.append(f"Start: {post['start_time']}")
+        if post["voice_channel_id"]:
+            lines.append(f"VC: <#{post['voice_channel_id']}>")
+
+        creator = guild.get_member(post["creator_id"])
+        creator_name = creator.display_name if creator else "Unknown"
+        lines.append(f"Host: {creator_name}")
+
+        if post["status"] == "full":
+            lines.append("**FULL**")
+
+        embed.add_field(name=title, value="\n".join(lines), inline=False)
+
+    embed.set_footer(text=f"{len(posts)} active game{'s' if len(posts) != 1 else ''}")
+    return embed
+
+
+async def refresh_board(bot):
+    for guild in bot.guilds:
+        board = await db.get_board(bot.db, guild.id)
+        if not board:
+            continue
+        channel = guild.get_channel(board["channel_id"])
+        if not channel:
+            continue
+        try:
+            msg = await channel.fetch_message(board["message_id"])
+            embed = await build_board_embed(bot.db, guild)
+            await msg.edit(embed=embed)
+        except discord.NotFound:
+            log.warning("Board message not found for guild %s", guild.id)
+        except Exception:
+            log.exception("Error refreshing board for guild %s", guild.id)
+
+
+async def update_vc_status(bot, post: dict | None, guild: discord.Guild):
+    """Set or clear the voice channel status for an LFG post's VC."""
+    if not post or not post.get("voice_channel_id"):
+        return
+    vc = guild.get_channel(post["voice_channel_id"])
+    if not vc:
+        return
+
+    try:
+        if post["status"] in ("open", "full"):
+            mode_label = "PvP" if post["mode"] == "pvp" else "PvE"
+            members = await db.get_lfg_members(bot.db, post["id"])
+            status_parts = [f"{mode_label} ({len(members)}/{post['max_slots']})"]
+            if post.get("description"):
+                status_parts.append(post["description"][:80])
+            await vc.edit(status=" - ".join(status_parts))
+        else:
+            await vc.edit(status=None)
+    except discord.Forbidden:
+        log.warning("No permission to set VC status on %s", vc.name)
+    except Exception:
+        log.exception("Error updating VC status for %s", vc.name)
 
 
 # -- Cog -------------------------------------------------------------------
@@ -568,52 +666,39 @@ class LFGCog(commands.Cog):
     async def lfg(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
         await interaction.response.send_modal(LFGModal(mode.value))
 
-    @app_commands.command(name="lfgroles", description="Post the LFG role picker")
-    @app_commands.checks.has_permissions(manage_roles=True)
-    async def lfgroles(self, interaction: discord.Interaction):
-        embed = discord.Embed(
+    @app_commands.command(name="lfgsetup", description="Post the role picker and live game board in this channel")
+    @app_commands.checks.has_permissions(manage_roles=True, manage_channels=True)
+    async def lfgsetup(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Setting up LFG channel...", ephemeral=True)
+
+        # Post role picker
+        role_embed = discord.Embed(
             title="I'm looking for a game!",
             description="Choose the type of game you want to be notified for. You can choose one, both, or neither to disable pings.",
             color=discord.Color.blurple(),
         )
-        view = discord.ui.View(timeout=None)
-        view.add_item(RoleToggleButton("pvp", get_lfg_emoji(interaction.guild, "pvp")))
-        view.add_item(RoleToggleButton("pve", get_lfg_emoji(interaction.guild, "pve")))
-        await interaction.channel.send(embed=embed, view=view)
-        await interaction.response.send_message("Role picker posted!", ephemeral=True)
+        role_view = discord.ui.View(timeout=None)
+        role_view.add_item(RoleToggleButton("pvp", get_lfg_emoji(interaction.guild, "pvp")))
+        role_view.add_item(RoleToggleButton("pve", get_lfg_emoji(interaction.guild, "pve")))
+        await interaction.channel.send(embed=role_embed, view=role_view)
 
-    @app_commands.command(name="lfgnow", description="Toggle your LFG roles")
-    async def lfgnow(self, interaction: discord.Interaction):
+        # Post live board
+        board_embed = await build_board_embed(interaction.client.db, interaction.guild)
+        board_msg = await interaction.channel.send(embed=board_embed)
+        await db.set_board(interaction.client.db, interaction.guild.id, interaction.channel.id, board_msg.id)
+
+        await interaction.followup.send("Done! Role picker and game board posted.", ephemeral=True)
+
+    @app_commands.command(name="lfgstatus", description="Toggle your LFG roles")
+    async def lfgstatus(self, interaction: discord.Interaction):
         view = LFGNowView(interaction.user)
         await interaction.response.send_message(
             "Looking for game settings:", view=view, ephemeral=True
         )
 
-    @app_commands.command(name="lfglist", description="Show all open LFG posts")
+    @app_commands.command(name="lfglist", description="Show all active games")
     async def lfglist(self, interaction: discord.Interaction):
-        posts = await db.get_open_posts(interaction.client.db, interaction.guild.id)
-        if not posts:
-            return await interaction.response.send_message("No open LFG posts right now.", ephemeral=True)
-
-        embed = discord.Embed(title="Open LFG Posts", color=discord.Color.green())
-        for post in posts:
-            mode_label = "PvP" if post["mode"] == "pvp" else "PvE"
-            members = await db.get_lfg_members(interaction.client.db, post["id"])
-            title = f"#{post['id']} - {mode_label}"
-            if post["description"]:
-                title += f": {post['description'][:50]}"
-
-            lines = [f"Party: {len(members)}/{post['max_slots']}"]
-            if post["start_time"]:
-                lines.append(f"Start: {post['start_time']}")
-            if post["voice_channel_id"]:
-                lines.append(f"VC: <#{post['voice_channel_id']}>")
-            if post["status"] == "full":
-                lines.append("**FULL**")
-
-            embed.add_field(name=title, value="\n".join(lines), inline=False)
-
-        embed.set_footer(text=f"{len(posts)} open game{'s' if len(posts) != 1 else ''}")
+        embed = await build_board_embed(interaction.client.db, interaction.guild)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="lfghelp", description="Show all LFG commands")
@@ -629,11 +714,11 @@ class LFGCog(commands.Cog):
         )
         embed.add_field(
             name="/lfglist",
-            value="Browse all open LFG posts",
+            value="See all active games",
             inline=False,
         )
         embed.add_field(
-            name="/lfgnow",
+            name="/lfgstatus",
             value="Toggle your LFG notification roles",
             inline=False,
         )
@@ -645,23 +730,6 @@ class LFGCog(commands.Cog):
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # -- Context menu commands -------------------------------------------------
-
-    @app_commands.context_menu(name="Start looking for game")
-    async def ctx_start_lfg(self, interaction: discord.Interaction, user: discord.User):
-        # Show a mode picker, then open the modal
-        view = LFGStartView()
-        await interaction.response.send_message(
-            "Pick a mode to start:", view=view, ephemeral=True
-        )
-
-    @app_commands.context_menu(name="Looking for Game settings")
-    async def ctx_lfg_settings(self, interaction: discord.Interaction, user: discord.User):
-        view = LFGNowView(interaction.user)
-        await interaction.response.send_message(
-            "Looking for game settings:", view=view, ephemeral=True
-        )
 
     @tasks.loop(minutes=5)
     async def cleanup_old_posts(self):
@@ -683,15 +751,44 @@ class LFGCog(commands.Cog):
                 embed = build_lfg_embed(post_dict, members, guild)
                 view = build_lfg_view(post["id"], "closed")
                 await msg.edit(embed=embed, view=view, attachments=[get_mode_icon(post_dict["mode"])])
+                await update_vc_status(self.bot, post_dict, guild)
             except discord.NotFound:
                 await db.delete_lfg(self.bot.db, post["id"])
             except Exception:
                 log.exception("Error expiring LFG post %s", post["id"])
+        if expired:
+            await refresh_board(self.bot)
 
     @cleanup_old_posts.before_loop
     async def before_cleanup(self):
         await self.bot.wait_until_ready()
 
 
+# -- Context menu commands (must be at module level) -----------------------
+
+
+@app_commands.context_menu(name="Start looking for game")
+async def ctx_start_lfg(interaction: discord.Interaction, user: discord.User):
+    view = LFGStartView()
+    await interaction.response.send_message(
+        "Pick a mode to start:", view=view, ephemeral=True
+    )
+
+
+@app_commands.context_menu(name="Looking for Game settings")
+async def ctx_lfg_settings(interaction: discord.Interaction, user: discord.User):
+    view = LFGNowView(interaction.user)
+    await interaction.response.send_message(
+        "Looking for game settings:", view=view, ephemeral=True
+    )
+
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(LFGCog(bot))
+    bot.tree.add_command(ctx_start_lfg)
+    bot.tree.add_command(ctx_lfg_settings)
+
+
+async def teardown(bot: commands.Bot):
+    bot.tree.remove_command(ctx_start_lfg.name, type=ctx_start_lfg.type)
+    bot.tree.remove_command(ctx_lfg_settings.name, type=ctx_lfg_settings.type)

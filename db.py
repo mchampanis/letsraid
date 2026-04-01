@@ -28,6 +28,12 @@ CREATE TABLE IF NOT EXISTS lfg_roles (
     role_id INTEGER NOT NULL,
     PRIMARY KEY (lfg_id, role_id)
 );
+
+CREATE TABLE IF NOT EXISTS lfg_board (
+    guild_id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL
+);
 """
 
 
@@ -141,6 +147,22 @@ async def get_open_posts(db: aiosqlite.Connection, guild_id: int) -> list[dict]:
         (guild_id,),
     ) as cursor:
         return [dict(row) async for row in cursor]
+
+
+async def set_board(db: aiosqlite.Connection, guild_id: int, channel_id: int, message_id: int):
+    await db.execute(
+        "INSERT OR REPLACE INTO lfg_board (guild_id, channel_id, message_id) VALUES (?, ?, ?)",
+        (guild_id, channel_id, message_id),
+    )
+    await db.commit()
+
+
+async def get_board(db: aiosqlite.Connection, guild_id: int) -> dict | None:
+    async with db.execute(
+        "SELECT * FROM lfg_board WHERE guild_id = ?", (guild_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
 
 
 async def get_expired_posts(db: aiosqlite.Connection, hours: int = 24) -> list[dict]:

@@ -28,11 +28,12 @@ class LetsRaidBot(commands.Bot):
         # Load cog (registers dynamic items internally)
         await self.load_extension("cogs.lfg")
 
-        # Sync slash commands to the configured guild for instant availability
-        guild = discord.Object(id=config.GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        log.info("Commands synced to guild %s", config.GUILD_ID)
+        # Sync slash commands to each configured guild (instant)
+        for guild_id in config.GUILD_IDS:
+            guild = discord.Object(id=guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            log.info("Commands synced to guild %s", guild_id)
 
     async def close(self):
         if hasattr(self, "db"):
