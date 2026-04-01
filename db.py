@@ -8,9 +8,10 @@ CREATE TABLE IF NOT EXISTS lfg_posts (
     guild_id INTEGER NOT NULL,
     creator_id INTEGER NOT NULL,
     voice_channel_id INTEGER,
-    description TEXT NOT NULL,
-    start_time TEXT NOT NULL,
-    max_slots INTEGER NOT NULL DEFAULT 6,
+    mode TEXT NOT NULL CHECK(mode IN ('pvp', 'pve')),
+    description TEXT,
+    start_time TEXT,
+    max_slots INTEGER NOT NULL DEFAULT 3,
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'full', 'closed')),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -45,18 +46,19 @@ async def create_lfg(
     guild_id: int,
     creator_id: int,
     voice_channel_id: int | None,
-    description: str,
-    start_time: str,
+    mode: str,
+    description: str | None,
+    start_time: str | None,
     max_slots: int,
-    role_ids: list[int],
+    role_id: int | None,
 ) -> int:
     cursor = await db.execute(
         """INSERT INTO lfg_posts
            (message_id, channel_id, guild_id, creator_id, voice_channel_id,
-            description, start_time, max_slots)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            mode, description, start_time, max_slots)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (message_id, channel_id, guild_id, creator_id, voice_channel_id,
-         description, start_time, max_slots),
+         mode, description, start_time, max_slots),
     )
     lfg_id = cursor.lastrowid
 
@@ -66,8 +68,8 @@ async def create_lfg(
         (lfg_id, creator_id),
     )
 
-    # Record pinged roles
-    for role_id in role_ids:
+    # Record pinged role
+    if role_id:
         await db.execute(
             "INSERT INTO lfg_roles (lfg_id, role_id) VALUES (?, ?)",
             (lfg_id, role_id),
@@ -75,6 +77,13 @@ async def create_lfg(
 
     await db.commit()
     return lfg_id
+
+
+async def update_message_id(db: aiosqlite.Connection, lfg_id: int, message_id: int):
+    await db.execute(
+        "UPDATE lfg_posts SET message_id = ? WHERE id = ?", (message_id, lfg_id)
+    )
+    await db.commit()
 
 
 async def get_lfg(db: aiosqlite.Connection, lfg_id: int) -> dict | None:
@@ -124,6 +133,14 @@ async def update_status(db: aiosqlite.Connection, lfg_id: int, status: str):
 async def delete_lfg(db: aiosqlite.Connection, lfg_id: int):
     await db.execute("DELETE FROM lfg_posts WHERE id = ?", (lfg_id,))
     await db.commit()
+
+
+async def get_open_posts(db: aiosqlite.Connection, guild_id: int) -> list[dict]:
+    async with db.execute(
+        "SELECT * FROM lfg_posts WHERE guild_id = ? AND status IN ('open', 'full') ORDER BY created_at DESC",
+        (guild_id,),
+    ) as cursor:
+        return [dict(row) async for row in cursor]
 
 
 async def get_expired_posts(db: aiosqlite.Connection, hours: int = 24) -> list[dict]:

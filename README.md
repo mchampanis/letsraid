@@ -19,8 +19,14 @@ Discord LFG (Looking For Game) bot for the First Wave Survivors server.
 4. Copy `.env.example` to `.env` and fill in your token and guild ID
 
 ```
-pip install -r requirements.txt
-python bot.py
+uv sync
+uv run python bot.py
+```
+
+Or use the runner script:
+
+```
+./run.ps1
 ```
 
 ## Configuration
