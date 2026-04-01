@@ -68,7 +68,7 @@ Copy `.env.example` to `.env` and fill in your values:
 
 ```
 BOT_TOKEN=your-bot-token
-GUILD_ID=your-server-id
+GUILD_IDS=your-server-id
 ```
 
 Install and run:
@@ -76,6 +76,12 @@ Install and run:
 ```
 uv sync
 uv run python bot.py
+```
+
+Run tests:
+
+```
+uv run pytest tests/ -v
 ```
 
 Or use the runner script:
@@ -95,7 +101,7 @@ Run these once after the bot is online:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `BOT_TOKEN` | Yes | -- | Discord bot token |
-| `GUILD_ID` | Yes | -- | Discord server ID |
+| `GUILD_IDS` | Yes | -- | Discord server ID(s), comma-separated |
 | `LFG_CHANNEL_NAME` | No | `looking-for-game` | Text channel for LFG posts |
 | `DB_PATH` | No | `letsraid.db` | SQLite database path |
 | `LFG_PVP_ROLE` | No | `LFG PvP` | Role name for PvP pings |

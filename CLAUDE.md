@@ -17,7 +17,7 @@ uv sync
 uv run python bot.py
 ```
 
-Requires `.env` with `BOT_TOKEN` and `GUILD_ID`.
+Requires `.env` with `BOT_TOKEN` and `GUILD_IDS`.
 
 ## Project Structure
 

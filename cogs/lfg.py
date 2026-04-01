@@ -120,7 +120,9 @@ class JoinButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:join:
         if len(members) >= post["max_slots"]:
             return await interaction.response.send_message(f"LFG #{self.lfg_id}: Party is full.", ephemeral=True)
 
-        await db.add_member(interaction.client.db, self.lfg_id, interaction.user.id)
+        added = await db.add_member(interaction.client.db, self.lfg_id, interaction.user.id)
+        if not added:
+            return await interaction.response.send_message(f"LFG #{self.lfg_id}: You already joined.", ephemeral=True)
         members.append(interaction.user.id)
 
         # Auto-full when slots filled
@@ -704,7 +706,7 @@ class LFGCog(commands.Cog):
     @app_commands.command(name="lfghelp", description="Show all LFG commands")
     async def lfghelp(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="LFG Bot Commands",
+            title="Let's Raid bot",
             color=discord.Color.blurple(),
         )
         embed.add_field(
