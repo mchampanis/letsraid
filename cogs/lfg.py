@@ -477,7 +477,6 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
             description=description,
             start_time=start_time,
             max_slots=max_slots,
-            role_id=role.id if role else None,
         )
 
         # Build the final embed and view with the real LFG ID
@@ -760,6 +759,9 @@ class LFGCog(commands.Cog):
                 log.exception("Error expiring LFG post %s", post["id"])
         if expired:
             await refresh_board(self.bot)
+
+        # Purge closed posts older than 24h from the database
+        await db.delete_old_closed_posts(self.bot.db, hours=24)
 
     @cleanup_old_posts.before_loop
     async def before_cleanup(self):

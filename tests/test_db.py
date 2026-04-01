@@ -7,7 +7,7 @@ class TestCreateLfg:
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pvp", description=None,
-            start_time=None, max_slots=3, role_id=None,
+            start_time=None, max_slots=3,
         )
         assert lfg_id is not None
         assert lfg_id > 0
@@ -17,44 +17,17 @@ class TestCreateLfg:
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pve", description="test",
-            start_time=None, max_slots=2, role_id=None,
+            start_time=None, max_slots=2,
         )
         members = await db.get_lfg_members(conn, lfg_id)
         assert members == [100]
-
-    async def test_role_stored(self, conn):
-        lfg_id = await db.create_lfg(
-            conn,
-            message_id=1, channel_id=2, guild_id=3, creator_id=100,
-            voice_channel_id=None, mode="pvp", description=None,
-            start_time=None, max_slots=3, role_id=999,
-        )
-        async with conn.execute(
-            "SELECT role_id FROM lfg_roles WHERE lfg_id = ?", (lfg_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-        assert len(rows) == 1
-        assert rows[0]["role_id"] == 999
-
-    async def test_no_role_when_none(self, conn):
-        lfg_id = await db.create_lfg(
-            conn,
-            message_id=1, channel_id=2, guild_id=3, creator_id=100,
-            voice_channel_id=None, mode="pvp", description=None,
-            start_time=None, max_slots=3, role_id=None,
-        )
-        async with conn.execute(
-            "SELECT role_id FROM lfg_roles WHERE lfg_id = ?", (lfg_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-        assert len(rows) == 0
 
     async def test_optional_fields_nullable(self, conn):
         lfg_id = await db.create_lfg(
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pve", description=None,
-            start_time=None, max_slots=2, role_id=None,
+            start_time=None, max_slots=2,
         )
         post = await db.get_lfg(conn, lfg_id)
         assert post["description"] is None
@@ -110,6 +83,22 @@ class TestMembers:
         members = await db.get_lfg_members(conn, sample_lfg)
         assert members == [1001, 2001, 2002]
 
+    async def test_add_member_rejected_when_full(self, conn):
+        """DB-level slot guard prevents overfilling the party."""
+        lfg_id = await db.create_lfg(
+            conn,
+            message_id=1, channel_id=2, guild_id=3, creator_id=100,
+            voice_channel_id=None, mode="pvp", description=None,
+            start_time=None, max_slots=2,
+        )
+        # Creator is member 1, add member 2 to fill it
+        await db.add_member(conn, lfg_id, 2001)
+        # Member 3 should be rejected
+        added = await db.add_member(conn, lfg_id, 2002)
+        assert added is False
+        members = await db.get_lfg_members(conn, lfg_id)
+        assert len(members) == 2
+
 
 class TestUpdateStatus:
     async def test_update_to_full(self, conn, sample_lfg):
@@ -141,15 +130,6 @@ class TestDeleteLfg:
         await db.delete_lfg(conn, sample_lfg)
         members = await db.get_lfg_members(conn, sample_lfg)
         assert members == []
-
-    async def test_cascades_roles(self, conn, sample_lfg):
-        await db.delete_lfg(conn, sample_lfg)
-        async with conn.execute(
-            "SELECT * FROM lfg_roles WHERE lfg_id = ?", (sample_lfg,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-        assert len(rows) == 0
-
 
 class TestGetOpenPosts:
     async def test_returns_open_posts(self, conn, sample_lfg):
@@ -217,3 +197,32 @@ class TestGetExpiredPosts:
         expired = await db.get_expired_posts(conn, hours=3)
         assert len(expired) == 1
         assert expired[0]["id"] == sample_lfg
+
+
+class TestDeleteOldClosedPosts:
+    async def test_deletes_old_closed(self, conn, sample_lfg):
+        await db.update_status(conn, sample_lfg, "closed")
+        await conn.execute(
+            "UPDATE lfg_posts SET created_at = datetime('now', '-25 hours') WHERE id = ?",
+            (sample_lfg,),
+        )
+        await conn.commit()
+        await db.delete_old_closed_posts(conn, hours=24)
+        post = await db.get_lfg(conn, sample_lfg)
+        assert post is None
+
+    async def test_keeps_recent_closed(self, conn, sample_lfg):
+        await db.update_status(conn, sample_lfg, "closed")
+        await db.delete_old_closed_posts(conn, hours=24)
+        post = await db.get_lfg(conn, sample_lfg)
+        assert post is not None
+
+    async def test_keeps_open_posts(self, conn, sample_lfg):
+        await conn.execute(
+            "UPDATE lfg_posts SET created_at = datetime('now', '-25 hours') WHERE id = ?",
+            (sample_lfg,),
+        )
+        await conn.commit()
+        await db.delete_old_closed_posts(conn, hours=24)
+        post = await db.get_lfg(conn, sample_lfg)
+        assert post is not None

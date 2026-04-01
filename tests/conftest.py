@@ -28,6 +28,5 @@ async def sample_lfg(conn):
         description="Free kits Stella",
         start_time="now",
         max_slots=3,
-        role_id=500,
     )
     return lfg_id

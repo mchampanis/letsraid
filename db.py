@@ -23,12 +23,6 @@ CREATE TABLE IF NOT EXISTS lfg_members (
     PRIMARY KEY (lfg_id, user_id)
 );
 
-CREATE TABLE IF NOT EXISTS lfg_roles (
-    lfg_id INTEGER NOT NULL REFERENCES lfg_posts(id) ON DELETE CASCADE,
-    role_id INTEGER NOT NULL,
-    PRIMARY KEY (lfg_id, role_id)
-);
-
 CREATE TABLE IF NOT EXISTS lfg_board (
     guild_id INTEGER PRIMARY KEY,
     channel_id INTEGER NOT NULL,
@@ -41,6 +35,7 @@ async def init_db(db: aiosqlite.Connection):
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA foreign_keys=ON")
     await db.executescript(SCHEMA)
+    await db.execute("DROP TABLE IF EXISTS lfg_roles")
     await db.commit()
 
 
@@ -56,7 +51,6 @@ async def create_lfg(
     description: str | None,
     start_time: str | None,
     max_slots: int,
-    role_id: int | None,
 ) -> int:
     cursor = await db.execute(
         """INSERT INTO lfg_posts
@@ -73,13 +67,6 @@ async def create_lfg(
         "INSERT INTO lfg_members (lfg_id, user_id) VALUES (?, ?)",
         (lfg_id, creator_id),
     )
-
-    # Record pinged role
-    if role_id:
-        await db.execute(
-            "INSERT INTO lfg_roles (lfg_id, role_id) VALUES (?, ?)",
-            (lfg_id, role_id),
-        )
 
     await db.commit()
     return lfg_id
@@ -109,13 +96,17 @@ async def get_lfg_members(db: aiosqlite.Connection, lfg_id: int) -> list[int]:
 
 
 async def add_member(db: aiosqlite.Connection, lfg_id: int, user_id: int) -> bool:
+    """Add a member if the party isn't full. Returns False on duplicate or full party."""
     try:
-        await db.execute(
-            "INSERT INTO lfg_members (lfg_id, user_id) VALUES (?, ?)",
-            (lfg_id, user_id),
+        cursor = await db.execute(
+            """INSERT INTO lfg_members (lfg_id, user_id)
+               SELECT ?, ?
+               WHERE (SELECT COUNT(*) FROM lfg_members WHERE lfg_id = ?)
+                     < (SELECT max_slots FROM lfg_posts WHERE id = ?)""",
+            (lfg_id, user_id, lfg_id, lfg_id),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
     except aiosqlite.IntegrityError:
         return False
 
@@ -163,6 +154,17 @@ async def get_board(db: aiosqlite.Connection, guild_id: int) -> dict | None:
     ) as cursor:
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+async def delete_old_closed_posts(db: aiosqlite.Connection, hours: int = 24):
+    """Delete posts that have been closed for longer than `hours`."""
+    await db.execute(
+        """DELETE FROM lfg_posts
+           WHERE status = 'closed'
+           AND created_at < datetime('now', ? || ' hours')""",
+        (f"-{hours}",),
+    )
+    await db.commit()
 
 
 async def get_expired_posts(db: aiosqlite.Connection, hours: int = 24) -> list[dict]:
