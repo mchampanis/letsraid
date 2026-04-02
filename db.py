@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS lfg_posts (
     start_time TEXT,
     max_slots INTEGER NOT NULL DEFAULT 3,
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'full', 'closed')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    guild_seq INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS lfg_members (
@@ -36,6 +37,20 @@ async def init_db(db: aiosqlite.Connection):
     await db.execute("PRAGMA foreign_keys=ON")
     await db.executescript(SCHEMA)
     await db.execute("DROP TABLE IF EXISTS lfg_roles")
+
+    # Migration: add guild_seq column if missing
+    async with db.execute("PRAGMA table_info(lfg_posts)") as cursor:
+        columns = [row[1] async for row in cursor]
+    if "guild_seq" not in columns:
+        await db.execute("ALTER TABLE lfg_posts ADD COLUMN guild_seq INTEGER NOT NULL DEFAULT 0")
+        # Backfill existing rows
+        await db.execute("""
+            UPDATE lfg_posts SET guild_seq = (
+                SELECT COUNT(*) FROM lfg_posts p2
+                WHERE p2.guild_id = lfg_posts.guild_id AND p2.id <= lfg_posts.id
+            )
+        """)
+
     await db.commit()
 
 
@@ -51,14 +66,21 @@ async def create_lfg(
     description: str | None,
     start_time: str | None,
     max_slots: int,
-) -> int:
+) -> tuple[int, int]:
+    # Compute next per-guild sequence number
+    async with db.execute(
+        "SELECT COALESCE(MAX(guild_seq), 0) + 1 FROM lfg_posts WHERE guild_id = ?",
+        (guild_id,),
+    ) as cursor:
+        next_seq = (await cursor.fetchone())[0]
+
     cursor = await db.execute(
         """INSERT INTO lfg_posts
            (message_id, channel_id, guild_id, creator_id, voice_channel_id,
-            mode, description, start_time, max_slots)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            mode, description, start_time, max_slots, guild_seq)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (message_id, channel_id, guild_id, creator_id, voice_channel_id,
-         mode, description, start_time, max_slots),
+         mode, description, start_time, max_slots, next_seq),
     )
     lfg_id = cursor.lastrowid
 
@@ -69,7 +91,7 @@ async def create_lfg(
     )
 
     await db.commit()
-    return lfg_id
+    return lfg_id, next_seq
 
 
 async def update_message_id(db: aiosqlite.Connection, lfg_id: int, message_id: int):
@@ -82,6 +104,19 @@ async def update_message_id(db: aiosqlite.Connection, lfg_id: int, message_id: i
 async def get_lfg(db: aiosqlite.Connection, lfg_id: int) -> dict | None:
     async with db.execute(
         "SELECT * FROM lfg_posts WHERE id = ?", (lfg_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_active_post_for_user(db: aiosqlite.Connection, guild_id: int, user_id: int) -> dict | None:
+    """Return the open/full post this user is a member of (if any)."""
+    async with db.execute(
+        """SELECT p.* FROM lfg_posts p
+           JOIN lfg_members m ON m.lfg_id = p.id
+           WHERE p.guild_id = ? AND m.user_id = ? AND p.status IN ('open', 'full')
+           LIMIT 1""",
+        (guild_id, user_id),
     ) as cursor:
         row = await cursor.fetchone()
         return dict(row) if row else None
@@ -134,7 +169,7 @@ async def delete_lfg(db: aiosqlite.Connection, lfg_id: int):
 
 async def get_open_posts(db: aiosqlite.Connection, guild_id: int) -> list[dict]:
     async with db.execute(
-        "SELECT * FROM lfg_posts WHERE guild_id = ? AND status IN ('open', 'full') ORDER BY created_at DESC",
+        "SELECT * FROM lfg_posts WHERE guild_id = ? AND status IN ('open', 'full') ORDER BY status = 'full', created_at DESC",
         (guild_id,),
     ) as cursor:
         return [dict(row) async for row in cursor]

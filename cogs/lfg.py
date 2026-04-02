@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timezone
 
 import aiosqlite
 import discord
@@ -27,11 +28,16 @@ def build_lfg_embed(
     embed = discord.Embed(title=title[:256], color=color)
 
     # Mode icon as thumbnail (referenced via attachment://)
-    icon_file = f"{post['mode']}.png"
+    icon_file = f"lfg_{post['mode']}.png"
     embed.set_thumbnail(url=f"attachment://{icon_file}")
 
     if post.get("start_time"):
-        embed.add_field(name="Start Time / Duration", value=post["start_time"], inline=False)
+        start_value = post["start_time"]
+        if post.get("created_at"):
+            dt = datetime.strptime(post["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            ts = int(dt.timestamp())
+            start_value += f" (posted <t:{ts}:R>)"
+        embed.add_field(name="Start Time / Duration", value=start_value, inline=False)
 
     if post["voice_channel_id"]:
         embed.add_field(name="Voice Channel", value=f"<#{post['voice_channel_id']}>", inline=False)
@@ -39,7 +45,7 @@ def build_lfg_embed(
     # Show pinged role (plain text so it works in DMs too)
     role_name = config.LFG_ROLE_NAMES.get(post["mode"])
     if role_name:
-        embed.add_field(name="Looking For", value=role_name, inline=False)
+        embed.add_field(name="Looking For", value=mode_label, inline=False)
 
     # Party list
     member_lines = []
@@ -49,15 +55,18 @@ def build_lfg_embed(
         suffix = " (creator)" if uid == post["creator_id"] else ""
         member_lines.append(f"{i}. {name}{suffix}")
 
-    slots_text = f"Party ({len(members)}/{post['max_slots']})"
+    slots_text = f"Players ({len(members)}/{post['max_slots']})"
     party_value = "\n".join(member_lines) if member_lines else "Empty"
     embed.add_field(name=slots_text, value=party_value, inline=False)
 
-    if status == "closed":
-        embed.add_field(name="Status", value="Closed", inline=False)
+    if status == "full":
+        embed.add_field(name="Status", value="Game full", inline=False)
+    elif status == "closed":
+        embed.add_field(name="Status", value="Finished", inline=False)
 
     creator = guild.get_member(post["creator_id"])
-    footer = f"Created by {creator.display_name if creator else 'Unknown'}  |  LFG #{post['id']}"
+    seq = post.get("guild_seq", post["id"])
+    footer = f"Created by {creator.display_name if creator else 'Unknown'}  |  LFG #{seq}"
     embed.set_footer(text=footer)
     # Use a dim color for footer by default (Discord handles footer text as grey)
 
@@ -65,8 +74,8 @@ def build_lfg_embed(
 
 
 def get_mode_icon(mode: str) -> discord.File:
-    path = os.path.join(ASSETS_DIR, f"{mode}.png")
-    return discord.File(path, filename=f"{mode}.png")
+    path = os.path.join(ASSETS_DIR, f"lfg_{mode}.png")
+    return discord.File(path, filename=f"lfg_{mode}.png")
 
 
 # -- Persistent button view -----------------------------------------------
@@ -76,9 +85,10 @@ def build_lfg_view(lfg_id: int, status: str, owner_controls: bool = False) -> di
     view = discord.ui.View(timeout=None)
 
     is_closed = status == "closed"
+    is_full = status == "full"
 
     if not owner_controls:
-        view.add_item(JoinButton(lfg_id, disabled=is_closed))
+        view.add_item(JoinButton(lfg_id, disabled=is_closed or is_full))
         view.add_item(JoinVCButton(lfg_id, disabled=is_closed))
         view.add_item(LeaveButton(lfg_id, disabled=is_closed))
 
@@ -92,13 +102,14 @@ def build_lfg_view(lfg_id: int, status: str, owner_controls: bool = False) -> di
 
 
 class JoinButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:join:(?P<id>\d+)"):
-    def __init__(self, lfg_id: int, disabled: bool = False):
+    def __init__(self, lfg_id: int, disabled: bool = False, label: str = "Join Game", style: discord.ButtonStyle = discord.ButtonStyle.green, row: int | None = None):
         super().__init__(
             discord.ui.Button(
-                label="Join Game",
-                style=discord.ButtonStyle.green,
+                label=label,
+                style=style,
                 custom_id=f"lfg:join:{lfg_id}",
                 disabled=disabled,
+                row=row,
             )
         )
         self.lfg_id = lfg_id
@@ -110,19 +121,19 @@ class JoinButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:join:
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: This LFG no longer exists.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
         if post["status"] != "open":
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: This LFG is not open.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: This game is not open.", ephemeral=True)
 
         members = await db.get_lfg_members(interaction.client.db, self.lfg_id)
         if interaction.user.id in members:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: You already joined.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: You already joined.", ephemeral=True)
         if len(members) >= post["max_slots"]:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: Party is full.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: Party is full.", ephemeral=True)
 
         added = await db.add_member(interaction.client.db, self.lfg_id, interaction.user.id)
         if not added:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: You already joined.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: You already joined.", ephemeral=True)
         members.append(interaction.user.id)
 
         # Auto-full when slots filled
@@ -147,13 +158,14 @@ class JoinButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:join:
 
 
 class JoinVCButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:joinvc:(?P<id>\d+)"):
-    def __init__(self, lfg_id: int, disabled: bool = False):
+    def __init__(self, lfg_id: int, disabled: bool = False, label: str = "Join VC", row: int | None = None):
         super().__init__(
             discord.ui.Button(
-                label="Join VC",
+                label=label,
                 style=discord.ButtonStyle.blurple,
                 custom_id=f"lfg:joinvc:{lfg_id}",
                 disabled=disabled,
+                row=row,
             )
         )
         self.lfg_id = lfg_id
@@ -165,32 +177,38 @@ class JoinVCButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:joi
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: This LFG no longer exists.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
         if not post["voice_channel_id"]:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: No voice channel set.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: No voice channel set.", ephemeral=True)
 
         vc = interaction.guild.get_channel(post["voice_channel_id"])
         if not vc:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: Voice channel not found.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: Voice channel not found.", ephemeral=True)
 
         if not interaction.user.voice:
             return await interaction.response.send_message(
-                f"LFG #{self.lfg_id}: You need to be in a voice channel first. Join any VC, then click again.",
+                f"LFG #{post['guild_seq']}: You need to be in a voice channel first. Join any VC, then click again.",
+                ephemeral=True,
+            )
+
+        if interaction.user.voice.channel and interaction.user.voice.channel.id == vc.id:
+            return await interaction.response.send_message(
+                f"LFG #{post['guild_seq']}: You're already in {vc.name}.",
                 ephemeral=True,
             )
 
         try:
             await interaction.user.move_to(vc)
-            await interaction.response.send_message(f"LFG #{self.lfg_id}: Moved you to {vc.name}.", ephemeral=True)
+            await interaction.response.send_message(f"LFG #{post['guild_seq']}: Moved you to {vc.name}.", ephemeral=True)
         except discord.Forbidden:
-            await interaction.response.send_message(f"LFG #{self.lfg_id}: I don't have permission to move you.", ephemeral=True)
+            await interaction.response.send_message(f"LFG #{post['guild_seq']}: I don't have permission to move you.", ephemeral=True)
 
 
 class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leave:(?P<id>\d+)"):
-    def __init__(self, lfg_id: int, disabled: bool = False):
+    def __init__(self, lfg_id: int, disabled: bool = False, label: str = "Leave Party"):
         super().__init__(
             discord.ui.Button(
-                label="Leave Party",
+                label=label,
                 style=discord.ButtonStyle.grey,
                 custom_id=f"lfg:leave:{lfg_id}",
                 disabled=disabled,
@@ -205,13 +223,13 @@ class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leav
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: This LFG no longer exists.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
         if interaction.user.id == post["creator_id"]:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: The creator can't leave. Use Game Finished or Delete instead.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: The creator can't leave. Use Game Finished or Delete instead.", ephemeral=True)
 
         removed = await db.remove_member(interaction.client.db, self.lfg_id, interaction.user.id)
         if not removed:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: You haven't joined this LFG.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: You haven't joined this game.", ephemeral=True)
 
         members = await db.get_lfg_members(interaction.client.db, self.lfg_id)
 
@@ -249,9 +267,9 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: This LFG no longer exists.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
         if interaction.user.id != post["creator_id"]:
-            return await interaction.response.send_message(f"LFG #{self.lfg_id}: Only the creator can finish this.", ephemeral=True)
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: Only the creator can finish this.", ephemeral=True)
 
         # Delete the channel post
         guild = interaction.client.get_guild(post["guild_id"])
@@ -273,7 +291,7 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
 
         # Update the DM message
         await interaction.response.edit_message(
-            content=f"LFG #{self.lfg_id}: Game finished. Post removed.",
+            content=f"LFG #{post['guild_seq']}: Game finished. Post removed.",
             embed=None, view=None, attachments=[],
         )
 
@@ -298,7 +316,7 @@ class RoleToggleButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg
         mode_label = "PvP" if mode == "pvp" else "PvE"
         super().__init__(
             discord.ui.Button(
-                label=f"Looking to play {mode_label}",
+                label=f"Start looking for {mode_label}",
                 style=discord.ButtonStyle.green if mode == "pve" else discord.ButtonStyle.red,
                 custom_id=f"lfg:role:{mode}",
                 emoji=emoji,
@@ -376,11 +394,15 @@ class LFGStartView(discord.ui.View):
 
     @discord.ui.button(label="PvP", style=discord.ButtonStyle.red, custom_id="lfgstart:pvp")
     async def pvp_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(LFGModal("pvp"))
+        blocked = await _check_active_game(interaction)
+        if not blocked:
+            await interaction.response.send_modal(LFGModal("pvp", interaction.guild))
 
     @discord.ui.button(label="PvE", style=discord.ButtonStyle.green, custom_id="lfgstart:pve")
     async def pve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(LFGModal("pve"))
+        blocked = await _check_active_game(interaction)
+        if not blocked:
+            await interaction.response.send_modal(LFGModal("pve", interaction.guild))
 
 
 # -- Modal -----------------------------------------------------------------
@@ -410,14 +432,24 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         required=True,
     )
 
-    def __init__(self, mode_value: str):
+    def __init__(self, mode_value: str, guild: discord.Guild):
         super().__init__()
         self.mode_value = mode_value
 
-        self.vc_select = discord.ui.ChannelSelect(
-            channel_types=[discord.ChannelType.voice, discord.ChannelType.stage_voice],
+        channels = get_vc_channels(guild)
+        options = [discord.SelectOption(label="Automatic (best guess)", value="auto", default=True)]
+        options += [
+            discord.SelectOption(
+                label=f"{ch.name} ({len(ch.members)} {'participant' if len(ch.members) == 1 else 'participants'} currently)",
+                value=str(ch.id),
+            )
+            for ch in channels
+        ]
+
+        self.vc_select = discord.ui.Select(
             placeholder="Select a voice channel",
-            min_values=0,
+            options=options,
+            min_values=1,
             max_values=1,
         )
         self.add_item(discord.ui.Label(text="Voice Channel", component=self.vc_select))
@@ -448,9 +480,8 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         voice_channel = None
         vc_warning = None
 
-        if self.vc_select.values:
-            vc_ref = self.vc_select.values[0]
-            voice_channel = interaction.guild.get_channel(vc_ref.id)
+        if self.vc_select.values and self.vc_select.values[0] not in ("auto", "none"):
+            voice_channel = interaction.guild.get_channel(int(self.vc_select.values[0]))
         elif interaction.user.voice and interaction.user.voice.channel:
             voice_channel = interaction.user.voice.channel
         else:
@@ -466,7 +497,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         start_time = self.start_time_input.value or None
 
         # Insert into DB first (with placeholder message_id) to get the real LFG ID
-        lfg_id = await db.create_lfg(
+        lfg_id, guild_seq = await db.create_lfg(
             interaction.client.db,
             message_id=0,
             channel_id=lfg_channel.id,
@@ -482,6 +513,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         # Build the final embed and view with the real LFG ID
         post = {
             "id": lfg_id,
+            "guild_seq": guild_seq,
             "creator_id": interaction.user.id,
             "voice_channel_id": voice_channel.id if voice_channel else None,
             "mode": self.mode_value,
@@ -489,6 +521,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
             "start_time": start_time,
             "max_slots": max_slots,
             "status": "open",
+            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         }
         members = [interaction.user.id]
         embed = build_lfg_embed(post, members, interaction.guild)
@@ -525,17 +558,15 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         await refresh_board(interaction.client)
         await update_vc_status(interaction.client, post, interaction.guild)
 
-        followup_msg = f"LFG #{lfg_id}: Post created in {lfg_channel.mention}!"
         if vc_warning:
-            followup_msg += f"\n{vc_warning}"
-        await interaction.followup.send(followup_msg, ephemeral=True)
+            await interaction.followup.send(vc_warning, ephemeral=True)
 
 
 # -- Helpers ---------------------------------------------------------------
 
 
 def get_vc_channels(guild: discord.Guild) -> list[discord.VoiceChannel]:
-    return [ch for ch in guild.voice_channels if ch.name.startswith(config.VC_PREFIX)]
+    return list(guild.voice_channels)
 
 
 def find_least_full_voice_channel(guild: discord.Guild) -> discord.VoiceChannel | None:
@@ -543,6 +574,27 @@ def find_least_full_voice_channel(guild: discord.Guild) -> discord.VoiceChannel 
     if not channels:
         return None
     return min(channels, key=lambda ch: len(ch.members))
+
+
+async def _check_active_game(interaction: discord.Interaction) -> bool:
+    """If user is in an active game, send ephemeral and return True (blocked)."""
+    active = await db.get_active_post_for_user(interaction.client.db, interaction.guild.id, interaction.user.id)
+    if not active:
+        return False
+    seq = active["guild_seq"]
+    if active["creator_id"] == interaction.user.id:
+        await interaction.response.send_message(
+            f"You already have an open game (LFG #{seq}). Finish it before creating another.",
+            ephemeral=True,
+        )
+    else:
+        view = discord.ui.View(timeout=None)
+        view.add_item(LeaveButton(active["id"], label=f"Leave #{seq}"))
+        await interaction.response.send_message(
+            f"You're already in a game (LFG #{seq}). Leave it first to create your own.",
+            view=view, ephemeral=True,
+        )
+    return True
 
 
 async def try_move_to_vc(member: discord.Member, channel: discord.VoiceChannel):
@@ -567,28 +619,39 @@ async def build_board_embed(bot_db: aiosqlite.Connection, guild: discord.Guild) 
     )
 
     if not posts:
-        embed.description = "No active games right now. Use `/lfg` to start one!"
+        embed.description = "No active games right now. Use `/lfg` to start one!\nUse `/lfgstatus` to change your notification settings."
         return embed
 
     for post in posts:
         mode_label = "PvP" if post["mode"] == "pvp" else "PvE"
+        emoji = get_lfg_emoji(guild, post["mode"])
         members = await db.get_lfg_members(bot_db, post["id"])
-        title = f"#{post['id']} - {mode_label}"
+        prefix = f"{emoji} " if emoji else ""
+        title = f"{prefix}#{post['guild_seq']} - {mode_label}"
         if post["description"]:
             title += f": {post['description'][:50]}"
 
-        lines = [f"Party: {len(members)}/{post['max_slots']}"]
+        jump_url = f"https://discord.com/channels/{guild.id}/{post['channel_id']}/{post['message_id']}"
+        lines = [f"[Jump to post]({jump_url})"]
+        party_str = f"Players: {len(members)}/{post['max_slots']}"
+        if post["status"] == "full":
+            party_str += " (**game is full** :no_entry: )"
+        else:
+            party_str += " (**open** :white_check_mark:)"
+        lines.append(party_str)
         if post["start_time"]:
-            lines.append(f"Start: {post['start_time']}")
+            start_str = post["start_time"]
+            if post.get("created_at"):
+                dt = datetime.strptime(post["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                ts = int(dt.timestamp())
+                start_str += f" (<t:{ts}:R>)"
+            lines.append(f"Start: {start_str}")
         if post["voice_channel_id"]:
             lines.append(f"VC: <#{post['voice_channel_id']}>")
 
         creator = guild.get_member(post["creator_id"])
         creator_name = creator.display_name if creator else "Unknown"
         lines.append(f"Host: {creator_name}")
-
-        if post["status"] == "full":
-            lines.append("**FULL**")
 
         embed.add_field(name=title, value="\n".join(lines), inline=False)
 
@@ -665,12 +728,14 @@ class LFGCog(commands.Cog):
         app_commands.Choice(name="pve", value="pve"),
     ])
     async def lfg(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
-        await interaction.response.send_modal(LFGModal(mode.value))
+        if await _check_active_game(interaction):
+            return
+        await interaction.response.send_modal(LFGModal(mode.value, interaction.guild))
 
     @app_commands.command(name="lfgsetup", description="Post the role picker and live game board in this channel")
     @app_commands.checks.has_permissions(manage_roles=True, manage_channels=True)
     async def lfgsetup(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Setting up LFG channel...", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
 
         # Post role picker
         role_embed = discord.Embed(
@@ -688,19 +753,33 @@ class LFGCog(commands.Cog):
         board_msg = await interaction.channel.send(embed=board_embed)
         await db.set_board(interaction.client.db, interaction.guild.id, interaction.channel.id, board_msg.id)
 
-        await interaction.followup.send("Done! Role picker and game board posted.", ephemeral=True)
+        await interaction.delete_original_response()
 
-    @app_commands.command(name="lfgstatus", description="Toggle your LFG roles")
+    @app_commands.command(name="lfgstatus", description="Change your looking for game settings")
     async def lfgstatus(self, interaction: discord.Interaction):
         view = LFGNowView(interaction.user)
         await interaction.response.send_message(
-            "Looking for game settings:", view=view, ephemeral=True
+            "Set your game status:", view=view, ephemeral=True
         )
 
     @app_commands.command(name="lfglist", description="Show all active games")
     async def lfglist(self, interaction: discord.Interaction):
         embed = await build_board_embed(interaction.client.db, interaction.guild)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        posts = await db.get_open_posts(interaction.client.db, interaction.guild.id)
+
+        view = discord.ui.View(timeout=None)
+        # Pad labels to consistent width using en spaces (\u2002)
+        max_seq_len = max((len(str(p["guild_seq"])) for p in posts), default=1)
+        for i, post in enumerate(posts[:5]):
+            if post["status"] != "closed":
+                is_full = post["status"] == "full"
+                join_style = discord.ButtonStyle.grey if is_full else discord.ButtonStyle.green
+                padded_seq = str(post["guild_seq"]).ljust(max_seq_len, "\u2002")
+                view.add_item(JoinButton(post["id"], disabled=is_full, label=f"Join #{padded_seq}", style=join_style))
+                if post["voice_channel_id"]:
+                    view.add_item(JoinVCButton(post["id"], label=f"Join #{padded_seq} VC"))
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="lfghelp", description="Show all LFG commands")
     async def lfghelp(self, interaction: discord.Interaction):
@@ -730,11 +809,12 @@ class LFGCog(commands.Cog):
                   "- **Looking for Game settings** -- toggle your notification roles",
             inline=False,
         )
+        embed.set_footer(text="Tip: Use /lfgstatus to change roles -- editing roles manually may cause buttons to go out of sync (they will self-correct eventually).")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=5)
     async def cleanup_old_posts(self):
-        expired = await db.get_expired_posts(self.bot.db, hours=3)
+        expired = await db.get_expired_posts(self.bot.db, hours=12)
         for post in expired:
             try:
                 await db.update_status(self.bot.db, post["id"], "closed")

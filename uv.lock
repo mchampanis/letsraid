@@ -368,7 +368,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "discord-py", specifier = ">=2.4" },
+    { name = "discord-py", specifier = ">=2.5" },
     { name = "python-dotenv", specifier = ">=1.0" },
 ]
 

@@ -15,8 +15,5 @@ LFG_ROLE_NAMES = {
     "pve": os.environ.get("LFG_PVE_ROLE", "LFG PvE"),
 }
 
-# Voice channel prefix filter (only channels starting with this are shown)
-VC_PREFIX = os.environ.get("VC_PREFIX", "VC")
-
 # Auto-move users to voice channel on join (true/false)
 AUTO_JOIN_VC = os.environ.get("AUTO_JOIN_VC", "true").lower() == "true"

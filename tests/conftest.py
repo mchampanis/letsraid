@@ -17,7 +17,7 @@ async def conn():
 @pytest.fixture
 async def sample_lfg(conn):
     """Create a sample LFG post and return its ID."""
-    lfg_id = await db.create_lfg(
+    lfg_id, _seq = await db.create_lfg(
         conn,
         message_id=100,
         channel_id=200,

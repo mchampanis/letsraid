@@ -13,7 +13,7 @@ Discord LFG (Looking For Game) bot for the First Wave Survivors server. Built fo
 - `/lfgsetup` posts role picker and live game board in one command
 - `/lfgstatus` personal role toggle with live-updating buttons
 - Auto-move to voice channel on join (configurable)
-- Posts auto-expire after 3 hours
+- Posts auto-expire after 12 hours
 - All buttons survive bot restarts
 
 ## Setup
@@ -48,7 +48,7 @@ Create these in your Discord server:
 
 **Channels:**
 - `#looking-for-game` -- text channel where LFG posts appear
-- Voice channels prefixed with `VC` (e.g. `VC1`, `VC2`) -- these show up in the VC picker
+- Voice channels -- all voice channels show up in the VC picker
 
 **Roles:**
 - `LFG PvP` -- pinged when someone creates a PvP game
@@ -106,7 +106,6 @@ Run these once after the bot is online:
 | `DB_PATH` | No | `letsraid.db` | SQLite database path |
 | `LFG_PVP_ROLE` | No | `LFG PvP` | Role name for PvP pings |
 | `LFG_PVE_ROLE` | No | `LFG PvE` | Role name for PvE pings |
-| `VC_PREFIX` | No | `VC` | Voice channel name prefix filter |
 | `AUTO_JOIN_VC` | No | `true` | Auto-move players to VC on join |
 
 ## Commands

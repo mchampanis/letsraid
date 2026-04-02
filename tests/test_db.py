@@ -2,8 +2,8 @@ import db
 
 
 class TestCreateLfg:
-    async def test_returns_id(self, conn):
-        lfg_id = await db.create_lfg(
+    async def test_returns_id_and_seq(self, conn):
+        lfg_id, guild_seq = await db.create_lfg(
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pvp", description=None,
@@ -11,9 +11,34 @@ class TestCreateLfg:
         )
         assert lfg_id is not None
         assert lfg_id > 0
+        assert guild_seq == 1
+
+    async def test_guild_seq_increments_per_guild(self, conn):
+        _, seq1 = await db.create_lfg(
+            conn,
+            message_id=1, channel_id=2, guild_id=3, creator_id=100,
+            voice_channel_id=None, mode="pvp", description=None,
+            start_time=None, max_slots=3,
+        )
+        _, seq2 = await db.create_lfg(
+            conn,
+            message_id=2, channel_id=2, guild_id=3, creator_id=101,
+            voice_channel_id=None, mode="pve", description=None,
+            start_time=None, max_slots=2,
+        )
+        # Different guild should start at 1
+        _, seq_other = await db.create_lfg(
+            conn,
+            message_id=3, channel_id=2, guild_id=999, creator_id=102,
+            voice_channel_id=None, mode="pvp", description=None,
+            start_time=None, max_slots=3,
+        )
+        assert seq1 == 1
+        assert seq2 == 2
+        assert seq_other == 1
 
     async def test_creator_is_first_member(self, conn):
-        lfg_id = await db.create_lfg(
+        lfg_id, _ = await db.create_lfg(
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pve", description="test",
@@ -23,7 +48,7 @@ class TestCreateLfg:
         assert members == [100]
 
     async def test_optional_fields_nullable(self, conn):
-        lfg_id = await db.create_lfg(
+        lfg_id, _ = await db.create_lfg(
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pve", description=None,
@@ -85,7 +110,7 @@ class TestMembers:
 
     async def test_add_member_rejected_when_full(self, conn):
         """DB-level slot guard prevents overfilling the party."""
-        lfg_id = await db.create_lfg(
+        lfg_id, _ = await db.create_lfg(
             conn,
             message_id=1, channel_id=2, guild_id=3, creator_id=100,
             voice_channel_id=None, mode="pvp", description=None,

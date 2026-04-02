@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Discord LFG bot for the First Wave Survivors server"
 requires-python = ">=3.11"
 dependencies = [
-    "discord.py>=2.4",
+    "discord.py>=2.5",
     "aiosqlite>=0.20",
     "python-dotenv>=1.0",
 ]
