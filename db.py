@@ -155,6 +155,13 @@ async def remove_member(db: aiosqlite.Connection, lfg_id: int, user_id: int) -> 
     return cursor.rowcount > 0
 
 
+async def update_voice_channel(db: aiosqlite.Connection, lfg_id: int, voice_channel_id: int | None):
+    await db.execute(
+        "UPDATE lfg_posts SET voice_channel_id = ? WHERE id = ?", (voice_channel_id, lfg_id)
+    )
+    await db.commit()
+
+
 async def update_status(db: aiosqlite.Connection, lfg_id: int, status: str):
     await db.execute(
         "UPDATE lfg_posts SET status = ? WHERE id = ?", (status, lfg_id)

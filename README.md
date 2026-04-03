@@ -8,7 +8,7 @@ Discord LFG (Looking For Game) bot for the First Wave Survivors server. Built fo
 - Voice channel picker in the modal, auto-defaults to your current or least-full VC
 - PvP/PvE mode icons on embeds
 - Role pings to notify players looking for games
-- Owner gets a DM with Game Finished button to clean up the post
+- Owner gets a DM with controls to finish the game, remove players, or change VC
 - `/lfglist` to browse all open LFG posts
 - `/lfgsetup` posts role picker and live game board in one command
 - `/lfgstatus` personal role toggle with live-updating buttons

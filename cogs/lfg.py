@@ -93,6 +93,8 @@ def build_lfg_view(lfg_id: int, status: str, owner_controls: bool = False) -> di
         view.add_item(LeaveButton(lfg_id, disabled=is_closed))
 
     if owner_controls:
+        view.add_item(RemovePlayerButton(lfg_id, disabled=is_closed))
+        view.add_item(ChangeVCButton(lfg_id, disabled=is_closed))
         view.add_item(GameFinishedButton(lfg_id, disabled=is_closed))
 
     return view
@@ -246,6 +248,191 @@ class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leav
 
         await refresh_board(interaction.client)
         await update_vc_status(interaction.client, post, interaction.guild)
+
+
+class RemovePlayerButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:kick:(?P<id>\d+)"):
+    def __init__(self, lfg_id: int, disabled: bool = False):
+        super().__init__(
+            discord.ui.Button(
+                label="Remove Player",
+                style=discord.ButtonStyle.red,
+                custom_id=f"lfg:kick:{lfg_id}",
+                disabled=disabled,
+            )
+        )
+        self.lfg_id = lfg_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match, /):
+        return cls(int(match["id"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        post = await db.get_lfg(interaction.client.db, self.lfg_id)
+        if not post:
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
+        if post["status"] == "closed":
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: This game is already finished.", ephemeral=True)
+        if interaction.user.id != post["creator_id"]:
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: Only the creator can remove players.", ephemeral=True)
+
+        members = await db.get_lfg_members(interaction.client.db, self.lfg_id)
+        removable = [uid for uid in members if uid != post["creator_id"]]
+        if not removable:
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: No players to remove.", ephemeral=True)
+
+        guild = interaction.client.get_guild(post["guild_id"])
+        options = []
+        for uid in removable:
+            member = guild.get_member(uid) if guild else None
+            name = member.display_name if member else f"Unknown ({uid})"
+            options.append(discord.SelectOption(label=name, value=str(uid)))
+
+        view = RemovePlayerView(self.lfg_id, options)
+        await interaction.response.send_message("Select a player to remove:", view=view, ephemeral=True)
+
+
+class RemovePlayerView(discord.ui.View):
+    def __init__(self, lfg_id: int, options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.lfg_id = lfg_id
+        select = discord.ui.Select(placeholder="Choose a player...", options=options)
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        target_id = int(interaction.data["values"][0])
+        post = await db.get_lfg(interaction.client.db, self.lfg_id)
+        if not post:
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
+
+        removed = await db.remove_member(interaction.client.db, self.lfg_id, target_id)
+        if not removed:
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: That player already left.", ephemeral=True)
+
+        members = await db.get_lfg_members(interaction.client.db, self.lfg_id)
+
+        # Reopen if was full
+        status = post["status"]
+        if status == "full" and len(members) < post["max_slots"]:
+            status = "open"
+            await db.update_status(interaction.client.db, self.lfg_id, "open")
+
+        # Update channel post
+        post["status"] = status
+        guild = interaction.client.get_guild(post["guild_id"])
+        if guild:
+            channel = guild.get_channel(post["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(post["message_id"])
+                    embed = build_lfg_embed(post, members, guild)
+                    view = build_lfg_view(self.lfg_id, status)
+                    await msg.edit(embed=embed, view=view, attachments=[get_mode_icon(post["mode"])])
+                except discord.NotFound:
+                    pass
+
+        target = guild.get_member(target_id) if guild else None
+        target_name = target.display_name if target else f"User {target_id}"
+        await interaction.response.edit_message(content=f"Removed **{target_name}** from LFG #{post['guild_seq']}.", view=None)
+
+        await refresh_board(interaction.client)
+        if guild:
+            await update_vc_status(interaction.client, post, guild)
+
+
+class ChangeVCButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:changevc:(?P<id>\d+)"):
+    def __init__(self, lfg_id: int, disabled: bool = False):
+        super().__init__(
+            discord.ui.Button(
+                label="Change VC",
+                style=discord.ButtonStyle.grey,
+                custom_id=f"lfg:changevc:{lfg_id}",
+                disabled=disabled,
+            )
+        )
+        self.lfg_id = lfg_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match, /):
+        return cls(int(match["id"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        post = await db.get_lfg(interaction.client.db, self.lfg_id)
+        if not post:
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
+        if post["status"] == "closed":
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: This game is already finished.", ephemeral=True)
+        if interaction.user.id != post["creator_id"]:
+            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: Only the creator can change the VC.", ephemeral=True)
+
+        guild = interaction.client.get_guild(post["guild_id"])
+        if not guild:
+            return await interaction.response.send_message("Could not find the server.", ephemeral=True)
+
+        channels = get_vc_channels(guild)
+        if not channels:
+            return await interaction.response.send_message("No voice channels found.", ephemeral=True)
+
+        options = [
+            discord.SelectOption(
+                label=f"{ch.name} ({len(ch.members)} in channel)",
+                value=str(ch.id),
+                default=ch.id == post["voice_channel_id"],
+            )
+            for ch in channels[:25]  # Select menus allow max 25 options
+        ]
+
+        view = ChangeVCView(self.lfg_id, options)
+        await interaction.response.send_message("Select a new voice channel:", view=view, ephemeral=True)
+
+
+class ChangeVCView(discord.ui.View):
+    def __init__(self, lfg_id: int, options: list[discord.SelectOption]):
+        super().__init__(timeout=60)
+        self.lfg_id = lfg_id
+        select = discord.ui.Select(placeholder="Choose a voice channel...", options=options)
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        new_vc_id = int(interaction.data["values"][0])
+        post = await db.get_lfg(interaction.client.db, self.lfg_id)
+        if not post:
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
+
+        old_vc_id = post["voice_channel_id"]
+
+        # Update DB
+        await db.update_voice_channel(interaction.client.db, self.lfg_id, new_vc_id)
+        post["voice_channel_id"] = new_vc_id
+
+        guild = interaction.client.get_guild(post["guild_id"])
+        if guild:
+            # Clear old VC status
+            if old_vc_id and old_vc_id != new_vc_id:
+                old_post = dict(post, voice_channel_id=old_vc_id, status="closed")
+                await update_vc_status(interaction.client, old_post, guild)
+
+            # Update channel post
+            members = await db.get_lfg_members(interaction.client.db, self.lfg_id)
+            channel = guild.get_channel(post["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(post["message_id"])
+                    embed = build_lfg_embed(post, members, guild)
+                    view = build_lfg_view(self.lfg_id, post["status"])
+                    await msg.edit(embed=embed, view=view, attachments=[get_mode_icon(post["mode"])])
+                except discord.NotFound:
+                    pass
+
+            # Set new VC status
+            await update_vc_status(interaction.client, post, guild)
+
+        new_vc = guild.get_channel(new_vc_id) if guild else None
+        vc_name = new_vc.name if new_vc else str(new_vc_id)
+        await interaction.response.edit_message(content=f"Voice channel changed to **{vc_name}** for LFG #{post['guild_seq']}.", view=None)
+
+        await refresh_board(interaction.client)
 
 
 class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:finished:(?P<id>\d+)"):
@@ -443,7 +630,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
                 label=f"{ch.name} ({len(ch.members)} {'participant' if len(ch.members) == 1 else 'participants'} currently)",
                 value=str(ch.id),
             )
-            for ch in channels
+            for ch in channels[:24]  # Select menus allow max 25 options (1 used by "Automatic")
         ]
 
         self.vc_select = discord.ui.Select(
@@ -722,14 +909,14 @@ class LFGCog(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_dynamic_items(
-            JoinButton, JoinVCButton, LeaveButton, GameFinishedButton, RoleToggleButton
+            JoinButton, JoinVCButton, LeaveButton, RemovePlayerButton, ChangeVCButton, GameFinishedButton, RoleToggleButton
         )
         self.cleanup_old_posts.start()
         log.info("LFG cog loaded")
 
     async def cog_unload(self):
         self.bot.remove_dynamic_items(
-            JoinButton, JoinVCButton, LeaveButton, GameFinishedButton, RoleToggleButton
+            JoinButton, JoinVCButton, LeaveButton, RemovePlayerButton, ChangeVCButton, GameFinishedButton, RoleToggleButton
         )
         self.cleanup_old_posts.cancel()
 
