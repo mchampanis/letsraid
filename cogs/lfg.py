@@ -529,10 +529,17 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
 
         # Send once with everything -- no edit needed
         ping_content = role.mention if role else None
-        msg = await lfg_channel.send(
-            content=ping_content, embed=embed, view=channel_view,
-            file=get_mode_icon(self.mode_value),
-        )
+        try:
+            msg = await lfg_channel.send(
+                content=ping_content, embed=embed, view=channel_view,
+                file=get_mode_icon(self.mode_value),
+            )
+        except discord.Forbidden:
+            await db.delete_lfg(interaction.client.db, lfg_id)
+            await interaction.followup.send(
+                f"I don't have permission to post in #{config.LFG_CHANNEL_NAME}.", ephemeral=True
+            )
+            return
 
         # Update DB with the real message ID
         await db.update_message_id(interaction.client.db, lfg_id, msg.id)
@@ -560,6 +567,11 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
 
         if vc_warning:
             await interaction.followup.send(vc_warning, ephemeral=True)
+        else:
+            try:
+                await interaction.delete_original_response()
+            except discord.NotFound:
+                pass
 
 
 # -- Helpers ---------------------------------------------------------------
