@@ -107,6 +107,7 @@ Run these once after the bot is online:
 | `LFG_PVP_ROLE` | No | `LFG PvP` | Role name for PvP pings |
 | `LFG_PVE_ROLE` | No | `LFG PvE` | Role name for PvE pings |
 | `AUTO_JOIN_VC` | No | `true` | Auto-move players to VC on join |
+| `HIDDEN_VC` | No | -- | Voice channels to hide from VC picker (`guild:ch,ch;guild:ch`) |
 
 ## Commands
 

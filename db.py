@@ -163,6 +163,8 @@ async def update_voice_channel(db: aiosqlite.Connection, lfg_id: int, voice_chan
 
 
 async def update_status(db: aiosqlite.Connection, lfg_id: int, status: str):
+    if status not in ("open", "full", "closed"):
+        raise ValueError(f"Invalid status: {status!r}")
     await db.execute(
         "UPDATE lfg_posts SET status = ? WHERE id = ?", (status, lfg_id)
     )

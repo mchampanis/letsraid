@@ -304,6 +304,8 @@ class RemovePlayerView(discord.ui.View):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
             return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
+        if interaction.user.id != post["creator_id"]:
+            return await interaction.response.send_message("Only the creator can remove players.", ephemeral=True)
 
         removed = await db.remove_member(interaction.client.db, self.lfg_id, target_id)
         if not removed:
@@ -399,6 +401,8 @@ class ChangeVCView(discord.ui.View):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
             return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
+        if interaction.user.id != post["creator_id"]:
+            return await interaction.response.send_message("Only the creator can change the VC.", ephemeral=True)
 
         old_vc_id = post["voice_channel_id"]
 
@@ -765,7 +769,8 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
 
 
 def get_vc_channels(guild: discord.Guild) -> list[discord.VoiceChannel]:
-    return list(guild.voice_channels)
+    hidden = config.HIDDEN_VC.get(guild.id, set())
+    return [ch for ch in guild.voice_channels if ch.id not in hidden]
 
 
 def find_least_full_voice_channel(guild: discord.Guild) -> discord.VoiceChannel | None:

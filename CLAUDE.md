@@ -6,7 +6,7 @@ A Discord bot for the First Wave Survivors server. Creates Looking For Game post
 
 ## Tech Stack
 
-- Python 3.11+, discord.py 2.4+, aiosqlite, SQLite
+- Python 3.11+, discord.py 2.5+, aiosqlite, SQLite
 - Slash commands via `app_commands`
 - Persistent buttons via `DynamicItem`
 
