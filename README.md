@@ -57,8 +57,8 @@ Create these in your Discord server:
 Make sure the bot's role (e.g. "Let's Raid bot") is **above** the LFG roles in the role list (Server Settings > Roles), otherwise it can't assign them.
 
 **Custom emoji (optional):**
-- Upload `assets/pvp.png` as a custom emoji named `lfg_pvp`
-- Upload `assets/pve.png` as a custom emoji named `lfg_pve`
+- Upload `assets/lfg_pvp.png` as a custom emoji named `lfg_pvp`
+- Upload `assets/lfg_pve.png` as a custom emoji named `lfg_pve`
 
 These can be used in role picker buttons.
 

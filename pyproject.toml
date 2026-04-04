@@ -1,6 +1,6 @@
 [project]
 name = "letsraid"
-version = "0.1.0"
+version = "0.9.0"
 description = "Discord LFG bot for the First Wave Survivors server"
 requires-python = ">=3.11"
 dependencies = [
