@@ -10,7 +10,6 @@ primary_region = 'ams'
 [env]
   DB_PATH = '/data/letsraid.db'
   HIDDEN_VC = '1465694444484427903:1467219468877828227'
-  HEALTHCHECK_URL='https://hc-ping.com/3a4c12c3-a98c-4fe6-98ce-eadce336d2f7'
 
 [mounts]
   source = "letsraid_data"
