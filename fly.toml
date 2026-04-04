@@ -16,6 +16,10 @@ primary_region = 'ams'
   destination = "/data"
   processes = ["bot"]
 
+[[restart]]
+  policy = "always"
+  processes = ["bot"]
+
 [[vm]]
   cpu_kind = 'shared'
   cpus = 1
