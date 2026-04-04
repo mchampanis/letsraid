@@ -1,8 +1,9 @@
 import logging
 
+import aiohttp
 import aiosqlite
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
 import db
@@ -43,6 +44,16 @@ class LetsRaidBot(commands.Bot):
 
     async def on_ready(self):
         log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
+        if config.HEALTHCHECK_URL and not self.heartbeat.is_running():
+            self.heartbeat.start()
+
+    @tasks.loop(minutes=5)
+    async def heartbeat(self):
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.get(config.HEALTHCHECK_URL)
+        except Exception:
+            log.warning("Healthcheck ping failed", exc_info=True)
 
 
 bot = LetsRaidBot()

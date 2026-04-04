@@ -108,6 +108,7 @@ Run these once after the bot is online:
 | `LFG_PVE_ROLE` | No | `LFG PvE` | Role name for PvE pings |
 | `AUTO_JOIN_VC` | No | `true` | Auto-move players to VC on join |
 | `HIDDEN_VC` | No | -- | Voice channels to hide from VC picker (`guild:ch,ch;guild:ch`) |
+| `HEALTHCHECK_URL` | No | -- | Healthchecks.io ping URL for uptime monitoring |
 
 ## Commands
 

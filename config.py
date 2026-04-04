@@ -18,6 +18,9 @@ LFG_ROLE_NAMES = {
 # Auto-move users to voice channel on join (true/false)
 AUTO_JOIN_VC = os.environ.get("AUTO_JOIN_VC", "true").lower() == "true"
 
+# Healthchecks.io ping URL (optional, e.g. https://hc-ping.com/your-uuid)
+HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL")
+
 # Voice channels to hide from the VC picker, per guild.
 # Format: HIDDEN_VC=guild_id:channel_id,channel_id;guild_id:channel_id
 HIDDEN_VC: dict[int, set[int]] = {}
