@@ -109,6 +109,18 @@ async def get_lfg(db: aiosqlite.Connection, lfg_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+async def get_active_post_by_vc(db: aiosqlite.Connection, guild_id: int, voice_channel_id: int) -> dict | None:
+    """Return the open/full post linked to this voice channel (if any)."""
+    async with db.execute(
+        """SELECT * FROM lfg_posts
+           WHERE guild_id = ? AND voice_channel_id = ? AND status IN ('open', 'full')
+           LIMIT 1""",
+        (guild_id, voice_channel_id),
+    ) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def get_active_post_for_user(db: aiosqlite.Connection, guild_id: int, user_id: int) -> dict | None:
     """Return the open/full post this user is a member of (if any)."""
     async with db.execute(

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -478,6 +479,11 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
         if guild:
             await update_vc_status(interaction.client, post, guild)
 
+        # Clean up in-memory VC tracking state
+        cog = interaction.client.get_cog("LFGCog")
+        if cog:
+            cog._clear_vc_tracking(self.lfg_id)
+
         await db.delete_lfg(interaction.client.db, self.lfg_id)
 
         # Update the DM message
@@ -908,9 +914,19 @@ async def update_vc_status(bot, post: dict | None, guild: discord.Guild):
 # -- Cog -------------------------------------------------------------------
 
 
+_VC_PLAYED_THRESHOLD = 10 * 60  # seconds creator must be in VC before auto-clear
+_VC_SESSION_THRESHOLD = 60 * 60  # 1 hour of 2+ people in VC -> early expiry
+_EARLY_EXPIRY_HOURS = 3  # shortened cleanup window after a VC session
+_DEFAULT_EXPIRY_HOURS = 12
+
+
 class LFGCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._creator_vc_joins: dict[int, float] = {}  # lfg_id -> monotonic join time
+        self._vc_game_played: set[int] = set()  # lfg_ids where creator was in 10+ min
+        self._vc_multi_start: dict[int, float] = {}  # lfg_id -> when 2+ members first in VC together
+        self._vc_early_expiry: set[int] = set()  # lfg_ids qualifying for 3h expiry
 
     async def cog_load(self):
         self.bot.add_dynamic_items(
@@ -924,6 +940,76 @@ class LFGCog(commands.Cog):
             JoinButton, JoinVCButton, LeaveButton, RemovePlayerButton, ChangeVCButton, GameFinishedButton, RoleToggleButton
         )
         self.cleanup_old_posts.cancel()
+
+    def _clear_vc_tracking(self, post_id: int):
+        """Remove all in-memory VC tracking state for a post."""
+        self._creator_vc_joins.pop(post_id, None)
+        self._vc_game_played.discard(post_id)
+        self._vc_multi_start.pop(post_id, None)
+        self._vc_early_expiry.discard(post_id)
+
+    def _update_vc_session_tracking(self, post_id: int, creator_id: int, channel: discord.VoiceChannel):
+        """Track whether 2+ people (including creator) are in the VC together."""
+        if post_id in self._vc_early_expiry:
+            return  # already qualified
+
+        creator_present = any(m.id == creator_id for m in channel.members)
+        has_multiple = len(channel.members) >= 2
+
+        if creator_present and has_multiple:
+            # Start timer if not already running
+            if post_id not in self._vc_multi_start:
+                self._vc_multi_start[post_id] = time.monotonic()
+            # Check if threshold reached
+            elif time.monotonic() - self._vc_multi_start[post_id] >= _VC_SESSION_THRESHOLD:
+                self._vc_early_expiry.add(post_id)
+                self._vc_multi_start.pop(post_id, None)
+        else:
+            # Condition broken — reset timer
+            self._vc_multi_start.pop(post_id, None)
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        # Only care about channel changes (join/leave/move), not mute/deafen
+        if before.channel == after.channel:
+            return
+
+        joined = after.channel if after.channel != before.channel else None
+        left = before.channel if before.channel != after.channel else None
+
+        # Creator joined a VC — check if it's linked to their active post
+        if joined:
+            post = await db.get_active_post_by_vc(self.bot.db, member.guild.id, joined.id)
+            if post:
+                if member.id == post["creator_id"]:
+                    self._creator_vc_joins[post["id"]] = time.monotonic()
+                self._update_vc_session_tracking(post["id"], post["creator_id"], joined)
+
+        # Someone left a VC
+        if left:
+            post = await db.get_active_post_by_vc(self.bot.db, member.guild.id, left.id)
+            if not post:
+                return
+
+            # Creator left — check if they were in long enough
+            if member.id == post["creator_id"] and post["id"] in self._creator_vc_joins:
+                join_time = self._creator_vc_joins.pop(post["id"])
+                if time.monotonic() - join_time >= _VC_PLAYED_THRESHOLD:
+                    self._vc_game_played.add(post["id"])
+
+            # Update session tracking (member count changed)
+            self._update_vc_session_tracking(post["id"], post["creator_id"], left)
+
+            # VC is now empty and game was played — clear status silently
+            if len(left.members) == 0 and post["id"] in self._vc_game_played:
+                self._vc_game_played.discard(post["id"])
+                self._creator_vc_joins.pop(post["id"], None)
+                try:
+                    await left.edit(status=None)
+                except discord.Forbidden:
+                    log.warning("No permission to clear VC status on %s", left.name)
+                except Exception:
+                    log.exception("Error clearing VC status for %s", left.name)
 
     @app_commands.command(name="lfg", description="Create a Looking For Game post")
     @app_commands.describe(mode="PvP or PvE")
@@ -1018,7 +1104,14 @@ class LFGCog(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def cleanup_old_posts(self):
-        expired = await db.get_expired_posts(self.bot.db, hours=12)
+        # Posts with a detected VC session expire after 3h, others after 12h
+        candidates = await db.get_expired_posts(self.bot.db, hours=_EARLY_EXPIRY_HOURS)
+        default = await db.get_expired_posts(self.bot.db, hours=_DEFAULT_EXPIRY_HOURS)
+        default_ids = {p["id"] for p in default}
+        expired = list(default)
+        for p in candidates:
+            if p["id"] not in default_ids and p["id"] in self._vc_early_expiry:
+                expired.append(p)
         for post in expired:
             try:
                 await db.update_status(self.bot.db, post["id"], "closed")
@@ -1037,8 +1130,10 @@ class LFGCog(commands.Cog):
                 view = build_lfg_view(post["id"], "closed")
                 await msg.edit(embed=embed, view=view, attachments=[get_mode_icon(post_dict["mode"])])
                 await update_vc_status(self.bot, post_dict, guild)
+                self._clear_vc_tracking(post["id"])
             except discord.NotFound:
                 await db.delete_lfg(self.bot.db, post["id"])
+                self._clear_vc_tracking(post["id"])
             except Exception:
                 log.exception("Error expiring LFG post %s", post["id"])
         if expired:
