@@ -33,7 +33,19 @@ class LetsRaidBot(commands.Bot):
         for guild_id in config.GUILD_IDS:
             guild = discord.Object(id=guild_id)
             self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+            try:
+                await self.tree.sync(guild=guild)
+            except discord.Forbidden:
+                # Bot isn't in this guild, or was invited without the
+                # applications.commands scope. Skip so one bad ID doesn't
+                # take the whole process down.
+                log.warning(
+                    "Cannot sync commands to guild %s: missing access "
+                    "(check GUILD_IDS and that the bot was invited with "
+                    "the applications.commands scope)",
+                    guild_id,
+                )
+                continue
             log.info("Commands synced to guild %s", guild_id)
 
     async def close(self):
