@@ -408,6 +408,18 @@ class ChangeVCView(discord.ui.View):
 
         old_vc_id = post["voice_channel_id"]
 
+        # Reject if the target VC is already attached to another active post
+        if new_vc_id != old_vc_id:
+            taken = await db.get_active_post_by_vc(
+                interaction.client.db, post["guild_id"], new_vc_id, exclude_lfg_id=self.lfg_id
+            )
+            if taken:
+                return await interaction.response.send_message(
+                    f"<#{new_vc_id}> is already attached to LFG #{taken['guild_seq']}. "
+                    "Pick a different voice channel.",
+                    ephemeral=True,
+                )
+
         # Update DB
         await db.update_voice_channel(interaction.client.db, self.lfg_id, new_vc_id)
         post["voice_channel_id"] = new_vc_id
@@ -686,6 +698,18 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
             voice_channel = find_least_full_voice_channel(interaction.guild)
             if voice_channel and len(voice_channel.members) > 0:
                 vc_warning = f"Note: {voice_channel.name} has {len(voice_channel.members)} participant(s) already."
+
+        # Enforce VC uniqueness across active posts
+        if voice_channel:
+            taken = await db.get_active_post_by_vc(
+                interaction.client.db, interaction.guild.id, voice_channel.id
+            )
+            if taken:
+                return await interaction.response.send_message(
+                    f"{voice_channel.mention} is already attached to LFG #{taken['guild_seq']}. "
+                    "Pick a different voice channel.",
+                    ephemeral=True,
+                )
 
         # Find the role to ping
         role_name = config.LFG_ROLE_NAMES.get(self.mode_value)

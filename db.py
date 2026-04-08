@@ -109,14 +109,26 @@ async def get_lfg(db: aiosqlite.Connection, lfg_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-async def get_active_post_by_vc(db: aiosqlite.Connection, guild_id: int, voice_channel_id: int) -> dict | None:
-    """Return the open/full post linked to this voice channel (if any)."""
-    async with db.execute(
-        """SELECT * FROM lfg_posts
-           WHERE guild_id = ? AND voice_channel_id = ? AND status IN ('open', 'full')
-           LIMIT 1""",
-        (guild_id, voice_channel_id),
-    ) as cursor:
+async def get_active_post_by_vc(
+    db: aiosqlite.Connection,
+    guild_id: int,
+    voice_channel_id: int,
+    exclude_lfg_id: int | None = None,
+) -> dict | None:
+    """Return the open/full post linked to this voice channel (if any).
+
+    Voice channel uniqueness across active posts is enforced at write time, so
+    at most one row will match. `exclude_lfg_id` lets the caller skip a known
+    post (used by ChangeVC to check if the *target* VC is taken by someone else).
+    """
+    query = """SELECT * FROM lfg_posts
+               WHERE guild_id = ? AND voice_channel_id = ? AND status IN ('open', 'full')"""
+    params: tuple = (guild_id, voice_channel_id)
+    if exclude_lfg_id is not None:
+        query += " AND id != ?"
+        params = (*params, exclude_lfg_id)
+    query += " LIMIT 1"
+    async with db.execute(query, params) as cursor:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
