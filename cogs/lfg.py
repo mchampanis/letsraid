@@ -705,11 +705,13 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
                 interaction.client.db, interaction.guild.id, voice_channel.id
             )
             if taken:
-                return await interaction.response.send_message(
+                # Response was already deferred above, so use followup.
+                await interaction.followup.send(
                     f"{voice_channel.mention} is already attached to LFG #{taken['guild_seq']}. "
                     "Pick a different voice channel.",
                     ephemeral=True,
                 )
+                return
 
         # Find the role to ping
         role_name = config.LFG_ROLE_NAMES.get(self.mode_value)
