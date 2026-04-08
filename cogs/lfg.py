@@ -48,17 +48,18 @@ def build_lfg_embed(
     if role_name:
         embed.add_field(name="Looking For", value=mode_label, inline=False)
 
-    # Party list
+    # Party list -- show filled slots, then empty placeholders up to max_slots
     member_lines = []
     for i, uid in enumerate(members, 1):
         member = guild.get_member(uid)
         name = member.display_name if member else f"Unknown ({uid})"
         suffix = " (creator)" if uid == post["creator_id"] else ""
         member_lines.append(f"{i}. {name}{suffix}")
+    for i in range(len(members) + 1, post["max_slots"] + 1):
+        member_lines.append(f"{i}. _______")
 
     slots_text = f"Players ({len(members)}/{post['max_slots']})"
-    party_value = "\n".join(member_lines) if member_lines else "Empty"
-    embed.add_field(name=slots_text, value=party_value, inline=False)
+    embed.add_field(name=slots_text, value="\n".join(member_lines), inline=False)
 
     if status == "full":
         embed.add_field(name="Status", value="Game full", inline=False)
@@ -898,8 +899,7 @@ async def update_vc_status(bot, post: dict | None, guild: discord.Guild):
     try:
         if post["status"] in ("open", "full"):
             mode_label = "PvP" if post["mode"] == "pvp" else "PvE"
-            members = await db.get_lfg_members(bot.db, post["id"])
-            status_parts = [f"{mode_label} ({len(members)}/{post['max_slots']})"]
+            status_parts = [mode_label]
             if post.get("description"):
                 status_parts.append(post["description"][:80])
             await vc.edit(status=" - ".join(status_parts))
