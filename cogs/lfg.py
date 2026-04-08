@@ -974,8 +974,8 @@ class LFGCog(commands.Cog):
         if before.channel == after.channel:
             return
 
-        joined = after.channel if after.channel != before.channel else None
-        left = before.channel if before.channel != after.channel else None
+        joined = after.channel
+        left = before.channel
 
         # Creator joined a VC — check if it's linked to their active post
         if joined:

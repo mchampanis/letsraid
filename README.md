@@ -13,7 +13,9 @@ Discord LFG (Looking For Game) bot for the First Wave Survivors server. Built fo
 - `/lfgsetup` posts role picker and live game board in one command
 - `/lfgstatus` personal role toggle with live-updating buttons
 - Auto-move to voice channel on join (configurable)
-- Posts auto-expire after 12 hours
+- Voice channel awareness:
+  - VC status auto-clears once the game has actually been played (creator in VC 10+ min, then VC empties)
+  - Posts where the creator + at least one other player spent 1+ hour together in VC expire after 3 hours; all other posts expire after 12 hours
 - All buttons survive bot restarts
 
 ## Setup
