@@ -56,7 +56,8 @@ def build_lfg_embed(
         suffix = " (creator)" if uid == post["creator_id"] else ""
         member_lines.append(f"{i}. {name}{suffix}")
     for i in range(len(members) + 1, post["max_slots"] + 1):
-        member_lines.append(f"{i}. _______")
+        # Underlined non-breaking spaces render as a clean blank line, no stray underscores
+        member_lines.append(f"{i}. __\u2002\u2002\u2002\u2002\u2002\u2002\u2002__")
 
     slots_text = f"Players ({len(members)}/{post['max_slots']})"
     embed.add_field(name=slots_text, value="\n".join(member_lines), inline=False)
@@ -803,7 +804,9 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
 
 def get_vc_channels(guild: discord.Guild) -> list[discord.VoiceChannel]:
     hidden = config.HIDDEN_VC.get(guild.id, set())
-    return [ch for ch in guild.voice_channels if ch.id not in hidden]
+    channels = [ch for ch in guild.voice_channels if ch.id not in hidden]
+    # VC* channels first, then everything else; alphabetical within each group
+    return sorted(channels, key=lambda c: (not c.name.startswith("VC"), c.name.lower()))
 
 
 def find_least_full_voice_channel(guild: discord.Guild) -> discord.VoiceChannel | None:
