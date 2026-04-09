@@ -1113,8 +1113,8 @@ class LFGCog(commands.Cog):
 
         # Post role picker
         role_embed = discord.Embed(
-            title="I'm looking for a game!",
-            description="Choose the type of game you want to be notified for. You can choose one, both, or neither to disable pings.\n\nTo start a game, type `/lfg pvp` or `/lfg pve`.",
+            title="Are you looking for a game?",
+            description="Choose the type of game you want to be notified for. You can choose one, both, or neither to disable pings.\n\nOr start your own game: `/lfg pvp` or `/lfg pve`.",
             color=discord.Color.blurple(),
         )
         role_view = discord.ui.View(timeout=None)
