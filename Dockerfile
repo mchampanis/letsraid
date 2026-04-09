@@ -6,7 +6,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY bot.py config.py db.py ./
+COPY bot.py config.py db.py COMMIT* ./
 COPY cogs/ cogs/
 COPY assets/ assets/
 

@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import aiohttp
 import aiosqlite
@@ -7,6 +8,8 @@ from discord.ext import commands, tasks
 
 import config
 import db
+
+COMMIT = Path(__file__).with_name("COMMIT").read_text().strip() if Path(__file__).with_name("COMMIT").exists() else "unknown"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("letsraid")
@@ -55,7 +58,7 @@ class LetsRaidBot(commands.Bot):
         await super().close()
 
     async def on_ready(self):
-        log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
+        log.info("Logged in as %s (ID: %s) [commit: %s]", self.user, self.user.id, COMMIT)
         if config.HEALTHCHECK_URL and not self.heartbeat.is_running():
             self.heartbeat.start()
 
