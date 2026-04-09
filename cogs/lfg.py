@@ -57,7 +57,7 @@ def build_lfg_embed(
         member_lines.append(f"{i}. {name}{suffix}")
     for i in range(len(members) + 1, post["max_slots"] + 1):
         # Underlined non-breaking spaces render as a clean blank line, no stray underscores
-        member_lines.append(f"{i}. __\u2002\u2002\u2002\u2002\u2002\u2002\u2002__")
+        member_lines.append(f"{i}. __\u2002\u2002\u2002\u2002\u2002__")
 
     slots_text = f"Players ({len(members)}/{post['max_slots']})"
     embed.add_field(name=slots_text, value="\n".join(member_lines), inline=False)
