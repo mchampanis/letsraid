@@ -1206,13 +1206,9 @@ class LFGCog(commands.Cog):
                 if not channel:
                     continue
                 msg = await channel.fetch_message(post["message_id"])
-                members = await db.get_lfg_members(self.bot.db, post["id"])
+                await msg.delete()
                 post_dict = dict(post)
                 post_dict["status"] = "closed"
-                post_dict["description"] = f"[Expired] {post['description'] or ''}"
-                embed = build_lfg_embed(post_dict, members, guild)
-                view = build_lfg_view(post["id"], "closed")
-                await msg.edit(embed=embed, view=view, attachments=[get_mode_icon(post_dict["mode"])])
                 await update_vc_status(self.bot, post_dict, guild)
                 self._clear_vc_tracking(post["id"])
             except discord.NotFound:
