@@ -230,7 +230,11 @@ class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leav
         if not post:
             return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
         if interaction.user.id == post["creator_id"]:
-            return await interaction.response.send_message(f"LFG #{post['guild_seq']}: The creator can't leave. Use Game Finished or Delete instead.", ephemeral=True)
+            view = CreatorLeaveConfirmView(self.lfg_id, post["guild_seq"])
+            return await interaction.response.send_message(
+                f"LFG #{post['guild_seq']}: You created this game. Leaving will **delete** the post for everyone. Are you sure?",
+                view=view, ephemeral=True,
+            )
 
         removed = await db.remove_member(interaction.client.db, self.lfg_id, interaction.user.id)
         if not removed:
@@ -251,6 +255,57 @@ class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leav
 
         await refresh_board(interaction.client)
         await update_vc_status(interaction.client, post, interaction.guild)
+
+
+class CreatorLeaveConfirmView(discord.ui.View):
+    def __init__(self, lfg_id: int, guild_seq: int):
+        super().__init__(timeout=60)
+        self.lfg_id = lfg_id
+        self.guild_seq = guild_seq
+
+    @discord.ui.button(label="Yes, delete the game", style=discord.ButtonStyle.red)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        post = await db.get_lfg(interaction.client.db, self.lfg_id)
+        if not post:
+            return await interaction.response.edit_message(
+                content=f"LFG #{self.guild_seq}: This game no longer exists.", view=None,
+            )
+
+        # Delete the channel post
+        guild = interaction.client.get_guild(post["guild_id"])
+        if guild:
+            channel = guild.get_channel(post["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(post["message_id"])
+                    await msg.delete()
+                except discord.NotFound:
+                    pass
+
+        # Clear VC status before deleting
+        post["status"] = "closed"
+        if guild:
+            await update_vc_status(interaction.client, post, guild)
+
+        # Clean up in-memory VC tracking state
+        cog = interaction.client.get_cog("LFGCog")
+        if cog:
+            cog._clear_vc_tracking(self.lfg_id)
+
+        await db.delete_lfg(interaction.client.db, self.lfg_id)
+
+        await interaction.response.edit_message(
+            content=f"LFG #{self.guild_seq}: Game deleted.", view=None,
+        )
+
+        await refresh_board(interaction.client)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=f"LFG #{self.guild_seq}: The creator can't leave. Use the Game Finished button (check your private messages from Let's Raid bot).",
+            view=None,
+        )
 
 
 class RemovePlayerButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:kick:(?P<id>\d+)"):
@@ -1059,7 +1114,7 @@ class LFGCog(commands.Cog):
         # Post role picker
         role_embed = discord.Embed(
             title="I'm looking for a game!",
-            description="Choose the type of game you want to be notified for. You can choose one, both, or neither to disable pings.",
+            description="Choose the type of game you want to be notified for. You can choose one, both, or neither to disable pings.\n\nTo start a game, type `/lfg pvp` or `/lfg pve`.",
             color=discord.Color.blurple(),
         )
         role_view = discord.ui.View(timeout=None)
