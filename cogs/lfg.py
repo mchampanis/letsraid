@@ -56,8 +56,7 @@ def build_lfg_embed(
         suffix = " (creator)" if uid == post["creator_id"] else ""
         member_lines.append(f"{i}. {name}{suffix}")
     for i in range(len(members) + 1, post["max_slots"] + 1):
-        # Underlined non-breaking spaces render as a clean blank line, no stray underscores
-        member_lines.append(f"{i}. __\u2002\u2002\u2002\u2002\u2002__")
+        member_lines.append(f"{i}. *open*")
 
     slots_text = f"Players ({len(members)}/{post['max_slots']})"
     embed.add_field(name=slots_text, value="\n".join(member_lines), inline=False)
@@ -843,7 +842,8 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
             log.warning("Could not DM creator %s for LFG #%s", interaction.user.id, lfg_id)
 
         await refresh_board(interaction.client)
-        await update_vc_status(interaction.client, post, interaction.guild)
+        # VC status is set lazily when someone first joins the voice channel
+        # (via on_voice_state_update), not eagerly on creation.
 
         if vc_warning:
             await interaction.followup.send(vc_warning, ephemeral=True)
@@ -1061,13 +1061,18 @@ class LFGCog(commands.Cog):
         joined = after.channel
         left = before.channel
 
-        # Creator joined a VC — check if it's linked to their active post
+        # Someone joined a VC — check if it's linked to an active LFG post
         if joined:
             post = await db.get_active_post_by_vc(self.bot.db, member.guild.id, joined.id)
             if post:
                 if member.id == post["creator_id"]:
                     self._creator_vc_joins[post["id"]] = time.monotonic()
                 self._update_vc_session_tracking(post["id"], post["creator_id"], joined)
+
+                # First person in — set the VC status
+                if len(joined.members) == 1:
+                    post_dict = dict(post)
+                    await update_vc_status(self.bot, post_dict, member.guild)
 
         # Someone left a VC
         if left:
