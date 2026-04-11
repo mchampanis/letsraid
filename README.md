@@ -104,7 +104,7 @@ Run these once after the bot is online:
 |---|---|---|---|
 | `BOT_TOKEN` | Yes | -- | Discord bot token |
 | `GUILD_IDS` | Yes | -- | Discord server ID(s), comma-separated |
-| `LFG_CHANNEL_NAME` | No | `looking-for-game` | Text channel for LFG posts |
+| `LFG_CHANNEL` | No | `looking-for-game` | LFG channel name or numeric ID |
 | `DB_PATH` | No | `letsraid.db` | SQLite database path |
 | `LFG_PVP_ROLE` | No | `LFG PvP` | Role name for PvP pings |
 | `LFG_PVE_ROLE` | No | `LFG PvE` | Role name for PvE pings |

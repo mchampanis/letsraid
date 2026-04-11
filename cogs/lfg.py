@@ -56,7 +56,7 @@ def build_lfg_embed(
         suffix = " (creator)" if uid == post["creator_id"] else ""
         member_lines.append(f"{i}. {name}{suffix}")
     for i in range(len(members) + 1, post["max_slots"] + 1):
-        member_lines.append(f"{i}. *open*")
+        member_lines.append(f"{i}. __\u2002\u2002\u2002__ *(open)*")
 
     slots_text = f"Players ({len(members)}/{post['max_slots']})"
     embed.add_field(name=slots_text, value="\n".join(member_lines), inline=False)
@@ -125,7 +125,7 @@ class JoinButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:join:
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
         if post["status"] != "open":
             return await interaction.response.send_message(f"LFG #{post['guild_seq']}: This game is not open.", ephemeral=True)
 
@@ -181,7 +181,7 @@ class JoinVCButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:joi
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
         if not post["voice_channel_id"]:
             return await interaction.response.send_message(f"LFG #{post['guild_seq']}: No voice channel set.", ephemeral=True)
 
@@ -227,7 +227,7 @@ class LeaveButton(discord.ui.DynamicItem[discord.ui.Button], template=r"lfg:leav
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
         if interaction.user.id == post["creator_id"]:
             view = CreatorLeaveConfirmView(self.lfg_id, post["guild_seq"])
             return await interaction.response.send_message(
@@ -527,7 +527,7 @@ class GameFinishedButton(discord.ui.DynamicItem[discord.ui.Button], template=r"l
     async def callback(self, interaction: discord.Interaction):
         post = await db.get_lfg(interaction.client.db, self.lfg_id)
         if not post:
-            return await interaction.response.send_message(f"LFG: This game no longer exists.", ephemeral=True)
+            return await interaction.response.send_message("LFG: This game no longer exists.", ephemeral=True)
         if interaction.user.id != post["creator_id"]:
             return await interaction.response.send_message(f"LFG #{post['guild_seq']}: Only the creator can finish this.", ephemeral=True)
 
@@ -730,13 +730,16 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
                 "Party size must be 2 or 3.", ephemeral=True
             )
 
-        # Find LFG channel
-        lfg_channel = discord.utils.get(
-            interaction.guild.text_channels, name=config.LFG_CHANNEL_NAME
-        )
+        # Find LFG channel by ID or name
+        if config.LFG_CHANNEL.isdigit():
+            lfg_channel = interaction.guild.get_channel(int(config.LFG_CHANNEL))
+        else:
+            lfg_channel = discord.utils.get(
+                interaction.guild.text_channels, name=config.LFG_CHANNEL
+            )
         if not lfg_channel:
             return await interaction.response.send_message(
-                f"Could not find #{config.LFG_CHANNEL_NAME} channel.", ephemeral=True
+                f"Could not find LFG channel ({config.LFG_CHANNEL}).", ephemeral=True
             )
 
         await interaction.response.defer(ephemeral=True)
@@ -816,7 +819,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         except discord.Forbidden:
             await db.delete_lfg(interaction.client.db, lfg_id)
             await interaction.followup.send(
-                f"I don't have permission to post in #{config.LFG_CHANNEL_NAME}.", ephemeral=True
+                f"I don't have permission to post in {lfg_channel.mention}.", ephemeral=True
             )
             return
 

@@ -6,7 +6,8 @@ load_dotenv()
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 GUILD_IDS = [int(gid.strip()) for gid in os.environ["GUILD_IDS"].split(",")]
-LFG_CHANNEL_NAME = os.environ.get("LFG_CHANNEL_NAME", "looking-for-game")
+# Channel name or numeric ID -- either works
+LFG_CHANNEL = os.environ.get("LFG_CHANNEL", "looking-for-game")
 DB_PATH = os.environ.get("DB_PATH", "letsraid.db")
 
 # Role names pinged per mode
