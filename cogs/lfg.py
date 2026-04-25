@@ -470,8 +470,7 @@ class ChangeVCView(discord.ui.View):
             )
             if taken:
                 return await interaction.response.send_message(
-                    f"<#{new_vc_id}> is already attached to LFG #{taken['guild_seq']}. "
-                    "Pick a different voice channel.",
+                    format_vc_taken_message(f"<#{new_vc_id}>", taken, interaction.guild),
                     ephemeral=True,
                 )
 
@@ -765,8 +764,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
             if taken:
                 # Response was already deferred above, so use followup.
                 await interaction.followup.send(
-                    f"{voice_channel.mention} is already attached to LFG #{taken['guild_seq']}. "
-                    "Pick a different voice channel.",
+                    format_vc_taken_message(voice_channel.mention, taken, interaction.guild),
                     ephemeral=True,
                 )
                 return
@@ -858,6 +856,22 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
 
 
 # -- Helpers ---------------------------------------------------------------
+
+
+def format_vc_taken_message(vc_mention: str, taken: dict, guild: discord.Guild) -> str:
+    """Build a debug-friendly rejection message when a VC is already attached to a post."""
+    creator = guild.get_member(taken["creator_id"])
+    creator_name = creator.display_name if creator else f"User {taken['creator_id']}"
+    created_at = taken.get("created_at")
+    when = ""
+    if created_at:
+        dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        when = f", created <t:{int(dt.timestamp())}:R>"
+    return (
+        f"{vc_mention} is already attached to LFG #{taken['guild_seq']} "
+        f"(host: {creator_name}, status: {taken['status']}{when}). "
+        "Pick a different voice channel."
+    )
 
 
 def get_vc_channels(guild: discord.Guild) -> list[discord.VoiceChannel]:
@@ -1035,6 +1049,31 @@ class LFGCog(commands.Cog):
         self._vc_multi_start.pop(post_id, None)
         self._vc_early_expiry.discard(post_id)
 
+    async def _close_post(self, post):
+        """Mark a post closed: update DB, delete the channel message, clear VC status, drop tracking."""
+        try:
+            await db.update_status(self.bot.db, post["id"], "closed")
+            guild = self.bot.get_guild(post["guild_id"])
+            if not guild:
+                self._clear_vc_tracking(post["id"])
+                return
+            channel = guild.get_channel(post["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(post["message_id"])
+                    await msg.delete()
+                except discord.NotFound:
+                    # Channel message is already gone — drop the row entirely
+                    await db.delete_lfg(self.bot.db, post["id"])
+                    self._clear_vc_tracking(post["id"])
+                    return
+            post_dict = dict(post)
+            post_dict["status"] = "closed"
+            await update_vc_status(self.bot, post_dict, guild)
+            self._clear_vc_tracking(post["id"])
+        except Exception:
+            log.exception("Error closing LFG post %s", post["id"])
+
     def _update_vc_session_tracking(self, post_id: int, creator_id: int, channel: discord.VoiceChannel):
         """Track whether 2+ people (including creator) are in the VC together."""
         if post_id in self._vc_early_expiry:
@@ -1047,13 +1086,11 @@ class LFGCog(commands.Cog):
             # Start timer if not already running
             if post_id not in self._vc_multi_start:
                 self._vc_multi_start[post_id] = time.monotonic()
-            # Check if threshold reached
-            elif time.monotonic() - self._vc_multi_start[post_id] >= _VC_SESSION_THRESHOLD:
-                self._vc_early_expiry.add(post_id)
-                self._vc_multi_start.pop(post_id, None)
         else:
-            # Condition broken — reset timer
-            self._vc_multi_start.pop(post_id, None)
+            # Condition broke — qualify for early expiry if threshold was reached during the session
+            start = self._vc_multi_start.pop(post_id, None)
+            if start is not None and time.monotonic() - start >= _VC_SESSION_THRESHOLD:
+                self._vc_early_expiry.add(post_id)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -1092,16 +1129,10 @@ class LFGCog(commands.Cog):
             # Update session tracking (member count changed)
             self._update_vc_session_tracking(post["id"], post["creator_id"], left)
 
-            # VC is now empty and game was played — clear status silently
+            # VC is now empty and game was played — close the post and free the VC
             if len(left.members) == 0 and post["id"] in self._vc_game_played:
-                self._vc_game_played.discard(post["id"])
-                self._creator_vc_joins.pop(post["id"], None)
-                try:
-                    await left.edit(status=None)
-                except discord.Forbidden:
-                    log.warning("No permission to clear VC status on %s", left.name)
-                except Exception:
-                    log.exception("Error clearing VC status for %s", left.name)
+                await self._close_post(post)
+                await refresh_board(self.bot)
 
     @app_commands.command(name="lfg", description="Create a Looking For Game post")
     @app_commands.describe(mode="PvP or PvE")
@@ -1205,25 +1236,7 @@ class LFGCog(commands.Cog):
             if p["id"] not in default_ids and p["id"] in self._vc_early_expiry:
                 expired.append(p)
         for post in expired:
-            try:
-                await db.update_status(self.bot.db, post["id"], "closed")
-                guild = self.bot.get_guild(post["guild_id"])
-                if not guild:
-                    continue
-                channel = guild.get_channel(post["channel_id"])
-                if not channel:
-                    continue
-                msg = await channel.fetch_message(post["message_id"])
-                await msg.delete()
-                post_dict = dict(post)
-                post_dict["status"] = "closed"
-                await update_vc_status(self.bot, post_dict, guild)
-                self._clear_vc_tracking(post["id"])
-            except discord.NotFound:
-                await db.delete_lfg(self.bot.db, post["id"])
-                self._clear_vc_tracking(post["id"])
-            except Exception:
-                log.exception("Error expiring LFG post %s", post["id"])
+            await self._close_post(post)
         if expired:
             await refresh_board(self.bot)
 
