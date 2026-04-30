@@ -1249,7 +1249,7 @@ class LFGCog(commands.Cog):
                   "- **Looking for Game settings** -- toggle your notification roles",
             inline=False,
         )
-        embed.set_footer(text=f"Tip: Use /lfgstatus to change roles -- editing roles manually may cause buttons to go out of sync (they will self-correct eventually).\nbuild: {COMMIT_HASH}")
+        embed.set_footer(text=f"Tip: Use /lfgstatus to change roles -- editing roles manually may cause buttons to go out of sync (they will self-correct eventually).\n\nbuild: {COMMIT_HASH}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=5)
