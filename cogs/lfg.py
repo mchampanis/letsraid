@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -12,8 +13,27 @@ import config
 import db
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+REPO_DIR = os.path.dirname(os.path.dirname(__file__))
 
 log = logging.getLogger("letsraid.lfg")
+
+
+def _get_commit_hash() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return "unknown"
+
+
+COMMIT_HASH = _get_commit_hash()
 
 # -- Embed builder --------------------------------------------------------
 
@@ -1223,7 +1243,7 @@ class LFGCog(commands.Cog):
                   "- **Looking for Game settings** -- toggle your notification roles",
             inline=False,
         )
-        embed.set_footer(text="Tip: Use /lfgstatus to change roles -- editing roles manually may cause buttons to go out of sync (they will self-correct eventually).")
+        embed.set_footer(text=f"Tip: Use /lfgstatus to change roles -- editing roles manually may cause buttons to go out of sync (they will self-correct eventually).  build {COMMIT_HASH}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=5)
