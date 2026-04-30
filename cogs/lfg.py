@@ -1109,10 +1109,11 @@ class LFGCog(commands.Cog):
                     self._creator_vc_joins[post["id"]] = time.monotonic()
                 self._update_vc_session_tracking(post["id"], post["creator_id"], joined)
 
-                # First person in — set the VC status
-                if len(joined.members) == 1:
-                    post_dict = dict(post)
-                    await update_vc_status(self.bot, post_dict, member.guild)
+                # Any join into the linked VC sets the status (covers the case
+                # where non-members were already in the VC at LFG creation time).
+                # vc.edit is idempotent so re-setting during a session is harmless.
+                post_dict = dict(post)
+                await update_vc_status(self.bot, post_dict, member.guild)
 
         # Someone left a VC
         if left:
