@@ -30,6 +30,12 @@ def _get_commit_hash() -> str:
         )
         return result.stdout.strip()
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+    # Docker image has no .git; run.ps1 deploy stamps a COMMIT file at the repo root.
+    try:
+        with open(os.path.join(REPO_DIR, "COMMIT"), "r", encoding="utf-8") as f:
+            return f.read().strip() or "unknown"
+    except OSError:
         return "unknown"
 
 
