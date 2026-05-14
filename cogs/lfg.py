@@ -101,6 +101,29 @@ def build_lfg_embed(
     return embed
 
 
+def build_lfg_message_content(post: dict, guild: discord.Guild, role: discord.Role | None) -> str:
+    role_prefix = f"{role.mention} - " if role else ""
+    creator = guild.get_member(post["creator_id"])
+    creator_name = creator.display_name if creator else "Someone"
+
+    if post.get("description"):
+        game_text = post["description"]
+    else:
+        mode_label = "PvP" if post["mode"] == "pvp" else "PvE"
+        game_text = f"a {mode_label} LFG"
+
+    details = []
+    if post.get("start_time"):
+        details.append(post["start_time"])
+    if post.get("voice_channel_id"):
+        voice_channel = guild.get_channel(post["voice_channel_id"])
+        vc_name = voice_channel.name if voice_channel else f"VC {post['voice_channel_id']}"
+        details.append(f"in {vc_name}")
+
+    detail_text = f" ({', '.join(details)})" if details else ""
+    return f"{role_prefix}{creator_name} created {game_text}{detail_text}"
+
+
 def get_mode_icon(mode: str) -> discord.File:
     path = os.path.join(ASSETS_DIR, f"lfg_{mode}.png")
     return discord.File(path, filename=f"lfg_{mode}.png")
@@ -834,7 +857,7 @@ class LFGModal(discord.ui.Modal, title="Create LFG Post"):
         channel_view = build_lfg_view(lfg_id, "open")
 
         # Send once with everything -- no edit needed
-        ping_content = role.mention if role else None
+        ping_content = build_lfg_message_content(post, interaction.guild, role)
         try:
             msg = await lfg_channel.send(
                 content=ping_content, embed=embed, view=channel_view,
